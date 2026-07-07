@@ -3,11 +3,13 @@
 // app/page.tsx
 // Main todo page — client component managing all todo state and UI.
 // Phase 1: Todo CRUD (PRP 01) + Priority System (PRP 02).
+// Phase 2: Recurring Todos (PRP 03) + Reminders (PRP 04) + Subtasks (PRP 05).
 
 import { useState, useEffect, useMemo, useCallback, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatSingaporeDate, getSingaporeNow, getRelativeDueLabel } from '@/lib/timezone'
-import type { Priority, Todo, UpdateTodoDto } from '@/lib/db'
+import type { Priority, Todo, UpdateTodoDto, RecurrencePattern, Subtask } from '@/lib/db'
+import { useNotifications } from '@/lib/hooks/useNotifications'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,6 +27,24 @@ const PRIORITY_LABEL: Record<Priority, string> = {
   low: 'Low',
 }
 
+const PATTERN_LABEL: Record<RecurrencePattern, string> = {
+  daily: 'daily',
+  weekly: 'weekly',
+  monthly: 'monthly',
+  yearly: 'yearly',
+}
+
+// Maps reminder_minutes values to short display labels (client-side only)
+const REMINDER_BADGE_MAP: Record<number, string> = {
+  15: '15m',
+  30: '30m',
+  60: '1h',
+  120: '2h',
+  1440: '1d',
+  2880: '2d',
+  10080: '1w',
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -37,6 +57,123 @@ function PriorityBadge({ priority }: { priority: Priority }) {
     >
       {PRIORITY_LABEL[priority]}
     </span>
+  )
+}
+
+function RecurrenceBadge({ pattern }: { pattern: RecurrencePattern }) {
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-300">
+      🔄 {PATTERN_LABEL[pattern]}
+    </span>
+  )
+}
+
+function ReminderBadge({ minutes }: { minutes: number }) {
+  const label = REMINDER_BADGE_MAP[minutes] ?? `${minutes}m`
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-300">
+      🔔 {label}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Progress bar
+// ---------------------------------------------------------------------------
+
+function computeProgress(subtasks: Subtask[]): { completed: number; total: number; pct: number } {
+  const total = subtasks.length
+  const completed = subtasks.filter((s) => s.completed).length
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100)
+  return { completed, total, pct }
+}
+
+function ProgressBar({ todoId, subtasks }: { todoId: number; subtasks: Subtask[] }) {
+  const { completed, total, pct } = computeProgress(subtasks)
+  if (total === 0) return null
+  return (
+    <div className="mt-2" data-testid={`progress-container-${todoId}`}>
+      <div className="flex justify-between text-xs text-gray-500 mb-1">
+        <span data-testid={`subtask-counter-${todoId}`}>{completed}/{total} subtasks</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-1.5">
+        <div
+          data-testid={`progress-bar-${todoId}`}
+          className="bg-blue-500 h-1.5 rounded-full transition-all duration-200"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Subtask panel
+// ---------------------------------------------------------------------------
+
+interface SubtaskPanelProps {
+  todoId: number
+  subtasks: Subtask[]
+  onAdd: (title: string) => Promise<void>
+  onToggle: (subtaskId: number, completed: boolean) => Promise<void>
+  onDelete: (subtaskId: number) => Promise<void>
+}
+
+function SubtaskPanel({ todoId, subtasks, onAdd, onToggle, onDelete }: SubtaskPanelProps) {
+  const [input, setInput] = useState('')
+
+  async function handleAdd(e: FormEvent) {
+    e.preventDefault()
+    if (!input.trim()) return
+    await onAdd(input.trim())
+    setInput('')
+  }
+
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3">
+      <ul className="space-y-1 mb-2">
+        {subtasks.map((s) => (
+          <li key={s.id} className="flex items-center gap-2">
+            <input
+              data-testid={`subtask-checkbox-${s.id}`}
+              type="checkbox"
+              checked={s.completed}
+              onChange={() => onToggle(s.id, !s.completed)}
+              className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer"
+            />
+            <span
+              className={`flex-1 text-sm ${s.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}
+            >
+              {s.title}
+            </span>
+            <button
+              data-testid={`delete-subtask-${s.id}`}
+              onClick={() => onDelete(s.id)}
+              className="text-gray-400 hover:text-red-500 text-xs px-1"
+              aria-label={`Delete subtask "${s.title}"`}
+            >
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={handleAdd} className="flex gap-2">
+        <input
+          data-testid={`subtask-input-${todoId}`}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Add subtask…"
+          className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+        <button
+          type="submit"
+          className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300"
+        >
+          Add
+        </button>
+      </form>
+    </div>
   )
 }
 
@@ -80,6 +217,13 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
   const [title, setTitle] = useState(todo.title)
   const [dueDate, setDueDate] = useState(todo.due_date ? todo.due_date.slice(0, 16) : '')
   const [priority, setPriority] = useState<Priority>(todo.priority)
+  const [isRecurring, setIsRecurring] = useState(todo.is_recurring)
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>(
+    todo.recurrence_pattern ?? 'weekly'
+  )
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(
+    todo.reminder_minutes ?? null
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -89,6 +233,10 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
       setError('Title cannot be empty')
       return
     }
+    if (isRecurring && !dueDate) {
+      setError('A due date is required for recurring todos')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -96,6 +244,9 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
         title: title.trim(),
         due_date: dueDate || null,
         priority,
+        is_recurring: isRecurring,
+        recurrence_pattern: isRecurring ? recurrencePattern : null,
+        reminder_minutes: dueDate ? reminderMinutes : null,
       })
       onClose()
     } catch {
@@ -147,7 +298,13 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               data-testid="edit-due-date-input"
               type="datetime-local"
               value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
+              onChange={(e) => {
+                setDueDate(e.target.value)
+                if (!e.target.value) {
+                  setIsRecurring(false)
+                  setReminderMinutes(null)
+                }
+              }}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -162,6 +319,61 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
               value={priority}
               onChange={setPriority}
             />
+          </div>
+
+          <div>
+            <label htmlFor="edit-reminder" className="block text-sm font-medium text-gray-700 mb-1">
+              Reminder
+            </label>
+            <select
+              id="edit-reminder"
+              data-testid="edit-reminder-select"
+              value={reminderMinutes ?? ''}
+              disabled={!dueDate}
+              onChange={(e) => setReminderMinutes(e.target.value ? Number(e.target.value) : null)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              <option value="">None</option>
+              <option value="15">15 minutes before</option>
+              <option value="30">30 minutes before</option>
+              <option value="60">1 hour before</option>
+              <option value="120">2 hours before</option>
+              <option value="1440">1 day before</option>
+              <option value="2880">2 days before</option>
+              <option value="10080">1 week before</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                data-testid="edit-recurring-checkbox"
+                type="checkbox"
+                checked={isRecurring}
+                disabled={!dueDate}
+                onChange={(e) => setIsRecurring(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+              />
+              <span className="text-sm font-medium text-gray-700">Repeat</span>
+            </label>
+
+            {isRecurring && (
+              <select
+                data-testid="edit-recurrence-pattern-select"
+                value={recurrencePattern}
+                onChange={(e) => setRecurrencePattern(e.target.value as RecurrencePattern)}
+                className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            )}
+
+            {!dueDate && (
+              <span className="text-xs text-gray-400">Set a due date to enable</span>
+            )}
           </div>
 
           {error && (
@@ -236,58 +448,104 @@ function DeleteModal({
 
 interface TodoCardProps {
   todo: Todo
+  subtasks: Subtask[]
+  subtasksExpanded: boolean
   onToggle: (id: number, completed: boolean) => Promise<void>
   onEdit: (todo: Todo) => void
   onDelete: (id: number) => void
+  onToggleSubtasksExpanded: (id: number) => void
+  onAddSubtask: (todoId: number, title: string) => Promise<void>
+  onToggleSubtask: (todoId: number, subtaskId: number, completed: boolean) => Promise<void>
+  onDeleteSubtask: (todoId: number, subtaskId: number) => Promise<void>
 }
 
-function TodoCard({ todo, onToggle, onEdit, onDelete }: TodoCardProps) {
+function TodoCard({
+  todo,
+  subtasks,
+  subtasksExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+  onToggleSubtasksExpanded,
+  onAddSubtask,
+  onToggleSubtask,
+  onDeleteSubtask,
+}: TodoCardProps) {
   const dueInfo = todo.due_date ? getRelativeDueLabel(todo.due_date) : null
+  const { total } = computeProgress(subtasks)
 
   return (
     <div
-      className={`flex items-start gap-3 p-4 bg-white rounded-xl border border-gray-200 shadow-sm transition-opacity ${
+      className={`p-4 bg-white rounded-xl border border-gray-200 shadow-sm transition-opacity ${
         todo.completed ? 'opacity-60' : ''
       }`}
     >
-      <input
-        data-testid={`todo-checkbox-${todo.id}`}
-        type="checkbox"
-        checked={todo.completed}
-        onChange={() => onToggle(todo.id, !todo.completed)}
-        className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-blue-600 cursor-pointer"
-        aria-label={`Mark "${todo.title}" as ${todo.completed ? 'incomplete' : 'complete'}`}
-      />
+      <div className="flex items-start gap-3">
+        <input
+          data-testid={`todo-checkbox-${todo.id}`}
+          type="checkbox"
+          checked={todo.completed}
+          onChange={() => onToggle(todo.id, !todo.completed)}
+          className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-blue-600 cursor-pointer"
+          aria-label={`Mark "${todo.title}" as ${todo.completed ? 'incomplete' : 'complete'}`}
+        />
 
-      <div className="flex-1 min-w-0">
-        <p
-          data-testid="todo-title"
-          className={`text-sm font-medium ${todo.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}
-        >
-          {todo.title}
-        </p>
-        {dueInfo && (
-          <p className={`text-xs mt-0.5 ${dueInfo.color}`}>{dueInfo.label}</p>
-        )}
+        <div className="flex-1 min-w-0">
+          <p
+            data-testid="todo-title"
+            className={`text-sm font-medium ${todo.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}
+          >
+            {todo.title}
+          </p>
+          {dueInfo && (
+            <p className={`text-xs mt-0.5 ${dueInfo.color}`}>{dueInfo.label}</p>
+          )}
+          <div className="flex flex-wrap gap-1 mt-1">
+            <PriorityBadge priority={todo.priority} />
+            {todo.is_recurring && todo.recurrence_pattern && (
+              <RecurrenceBadge pattern={todo.recurrence_pattern} />
+            )}
+            {todo.reminder_minutes != null && (
+              <ReminderBadge minutes={todo.reminder_minutes} />
+            )}
+          </div>
+          <ProgressBar todoId={todo.id} subtasks={subtasks} />
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            data-testid={`subtask-toggle-${todo.id}`}
+            onClick={() => onToggleSubtasksExpanded(todo.id)}
+            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 px-1 py-1"
+          >
+            {subtasksExpanded ? '▼' : '▶'} Tasks{total > 0 ? ` (${total})` : ''}
+          </button>
+          <button
+            data-testid={`edit-todo-${todo.id}`}
+            onClick={() => onEdit(todo)}
+            className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50"
+          >
+            Edit
+          </button>
+          <button
+            data-testid={`delete-todo-${todo.id}`}
+            onClick={() => onDelete(todo.id)}
+            className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
-        <PriorityBadge priority={todo.priority} />
-        <button
-          data-testid={`edit-todo-${todo.id}`}
-          onClick={() => onEdit(todo)}
-          className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50"
-        >
-          Edit
-        </button>
-        <button
-          data-testid={`delete-todo-${todo.id}`}
-          onClick={() => onDelete(todo.id)}
-          className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
-        >
-          ✕
-        </button>
-      </div>
+      {subtasksExpanded && (
+        <SubtaskPanel
+          todoId={todo.id}
+          subtasks={subtasks}
+          onAdd={(title) => onAddSubtask(todo.id, title)}
+          onToggle={(sid, completed) => onToggleSubtask(todo.id, sid, completed)}
+          onDelete={(sid) => onDeleteSubtask(todo.id, sid)}
+        />
+      )}
     </div>
   )
 }
@@ -314,10 +572,21 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
+  // Subtask state
+  const [subtasksMap, setSubtasksMap] = useState<Record<number, Subtask[]>>({})
+  const [expandedSubtasks, setExpandedSubtasks] = useState<Set<number>>(new Set())
+
+  // Notifications state
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false)
+  useNotifications(notificationsEnabled)
+
   // Create-form state
   const [newTitle, setNewTitle] = useState('')
   const [newDueDate, setNewDueDate] = useState('')
   const [newPriority, setNewPriority] = useState<Priority>('medium')
+  const [newIsRecurring, setNewIsRecurring] = useState(false)
+  const [newRecurrencePattern, setNewRecurrencePattern] = useState<RecurrencePattern>('weekly')
+  const [newReminderMinutes, setNewReminderMinutes] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
@@ -335,14 +604,27 @@ export default function HomePage() {
   const fetchTodos = useCallback(async () => {
     setFetchError(null)
     try {
-      const res = await fetch('/api/todos')
-      if (res.status === 401) {
+      const [todosRes, subtasksRes] = await Promise.all([
+        fetch('/api/todos'),
+        fetch('/api/todos/subtasks'),
+      ])
+      if (todosRes.status === 401) {
         router.push('/login')
         return
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data: Todo[] = await res.json()
-      setTodos(data)
+      if (!todosRes.ok) throw new Error(`HTTP ${todosRes.status}`)
+      const todosData: Todo[] = await todosRes.json()
+      setTodos(todosData)
+
+      if (subtasksRes.ok) {
+        const subtasksData: Subtask[] = await subtasksRes.json()
+        const map: Record<number, Subtask[]> = {}
+        subtasksData.forEach((s) => {
+          if (!map[s.todo_id]) map[s.todo_id] = []
+          map[s.todo_id].push(s)
+        })
+        setSubtasksMap(map)
+      }
     } catch {
       setFetchError('Failed to load todos. Please refresh.')
     } finally {
@@ -361,6 +643,10 @@ export default function HomePage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     if (!newTitle.trim()) return
+    if (newIsRecurring && !newDueDate) {
+      setCreateError('A due date is required for recurring todos')
+      return
+    }
     setCreating(true)
     setCreateError(null)
 
@@ -372,6 +658,9 @@ export default function HomePage() {
           title: newTitle.trim(),
           due_date: newDueDate || null,
           priority: newPriority,
+          is_recurring: newIsRecurring,
+          recurrence_pattern: newIsRecurring ? newRecurrencePattern : null,
+          reminder_minutes: newDueDate ? newReminderMinutes : null,
         }),
       })
       const data = await res.json()
@@ -383,6 +672,9 @@ export default function HomePage() {
       setNewTitle('')
       setNewDueDate('')
       setNewPriority('medium')
+      setNewIsRecurring(false)
+      setNewRecurrencePattern('weekly')
+      setNewReminderMinutes(null)
     } catch {
       setCreateError('Failed to create todo. Please try again.')
     } finally {
@@ -408,12 +700,19 @@ export default function HomePage() {
 
   const handleToggle = useCallback(
     async (id: number, completed: boolean) => {
+      const todo = todos.find((t) => t.id === id)
+      const isRecurringCompletion = completed && todo?.is_recurring
+
       // Optimistic update
       setTodos((prev) =>
         prev.map((t) => (t.id === id ? { ...t, completed } : t))
       )
       try {
         await handleUpdate(id, { completed })
+        // Fetch all todos to pick up the new recurring instance
+        if (isRecurringCompletion) {
+          await fetchTodos()
+        }
       } catch {
         // Revert on failure
         setTodos((prev) =>
@@ -421,7 +720,7 @@ export default function HomePage() {
         )
       }
     },
-    [handleUpdate]
+    [handleUpdate, todos, fetchTodos]
   )
 
   async function handleDeleteConfirm() {
@@ -429,10 +728,15 @@ export default function HomePage() {
     const id = deletingId
     setDeletingId(null)
     setTodos((prev) => prev.filter((t) => t.id !== id))
+    setSubtasksMap((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     try {
       const res = await fetch(`/api/todos/${id}`, { method: 'DELETE' })
       if (!res.ok) {
-        await fetchTodos() // Re-fetch if delete failed
+        await fetchTodos()
       }
     } catch {
       await fetchTodos()
@@ -442,6 +746,104 @@ export default function HomePage() {
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
     router.push('/login')
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notification handler
+  // ---------------------------------------------------------------------------
+
+  async function handleEnableNotifications() {
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (Notification.permission === 'denied') return
+    const result = await Notification.requestPermission()
+    setNotificationsEnabled(result === 'granted')
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subtask handlers
+  // ---------------------------------------------------------------------------
+
+  function toggleSubtasksExpanded(todoId: number) {
+    setExpandedSubtasks((prev) => {
+      const next = new Set(prev)
+      if (next.has(todoId)) {
+        next.delete(todoId)
+      } else {
+        next.add(todoId)
+      }
+      return next
+    })
+  }
+
+  async function handleAddSubtask(todoId: number, title: string) {
+    const res = await fetch(`/api/todos/${todoId}/subtasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+    if (!res.ok) return
+    const newSubtask: Subtask = await res.json()
+    setSubtasksMap((prev) => ({
+      ...prev,
+      [todoId]: [...(prev[todoId] ?? []), newSubtask],
+    }))
+  }
+
+  async function handleToggleSubtask(todoId: number, subtaskId: number, completed: boolean) {
+    // Optimistic update
+    setSubtasksMap((prev) => ({
+      ...prev,
+      [todoId]: (prev[todoId] ?? []).map((s) =>
+        s.id === subtaskId ? { ...s, completed } : s
+      ),
+    }))
+    try {
+      const res = await fetch(`/api/todos/${todoId}/subtasks/${subtaskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed }),
+      })
+      if (!res.ok) {
+        setSubtasksMap((prev) => ({
+          ...prev,
+          [todoId]: (prev[todoId] ?? []).map((s) =>
+            s.id === subtaskId ? { ...s, completed: !completed } : s
+          ),
+        }))
+      }
+    } catch {
+      setSubtasksMap((prev) => ({
+        ...prev,
+        [todoId]: (prev[todoId] ?? []).map((s) =>
+          s.id === subtaskId ? { ...s, completed: !completed } : s
+        ),
+      }))
+    }
+  }
+
+  async function handleDeleteSubtask(todoId: number, subtaskId: number) {
+    setSubtasksMap((prev) => ({
+      ...prev,
+      [todoId]: (prev[todoId] ?? []).filter((s) => s.id !== subtaskId),
+    }))
+    try {
+      const res = await fetch(`/api/todos/${todoId}/subtasks/${subtaskId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        const r2 = await fetch(`/api/todos/${todoId}/subtasks`)
+        if (r2.ok) {
+          const subtasks: Subtask[] = await r2.json()
+          setSubtasksMap((prev) => ({ ...prev, [todoId]: subtasks }))
+        }
+      }
+    } catch {
+      const r2 = await fetch(`/api/todos/${todoId}/subtasks`)
+      if (r2.ok) {
+        const subtasks: Subtask[] = await r2.json()
+        setSubtasksMap((prev) => ({ ...prev, [todoId]: subtasks }))
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -512,12 +914,28 @@ export default function HomePage() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900">📝 Todo App</h1>
-          <button
-            onClick={handleLogout}
-            className="text-sm text-gray-500 hover:text-gray-800"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            {typeof window !== 'undefined' && 'Notification' in window && (
+              notificationsEnabled ? (
+                <span className="bg-green-500 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1">
+                  🔔 <span>Notifications On</span>
+                </span>
+              ) : (
+                <button
+                  onClick={handleEnableNotifications}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1"
+                >
+                  🔔 <span>Enable Notifications</span>
+                </button>
+              )
+            )}
+            <button
+              onClick={handleLogout}
+              className="text-sm text-gray-500 hover:text-gray-800"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -552,7 +970,13 @@ export default function HomePage() {
                 type="datetime-local"
                 value={newDueDate}
                 min={getMinDate()}
-                onChange={(e) => setNewDueDate(e.target.value)}
+                onChange={(e) => {
+                  setNewDueDate(e.target.value)
+                  if (!e.target.value) {
+                    setNewIsRecurring(false)
+                    setNewReminderMinutes(null)
+                  }
+                }}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -567,6 +991,59 @@ export default function HomePage() {
                 value={newPriority}
                 onChange={setNewPriority}
               />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label htmlFor="reminder-select" className="block text-xs text-gray-500 mb-1">
+                Reminder
+              </label>
+              <select
+                id="reminder-select"
+                data-testid="reminder-select"
+                value={newReminderMinutes ?? ''}
+                disabled={!newDueDate}
+                onChange={(e) => setNewReminderMinutes(e.target.value ? Number(e.target.value) : null)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              >
+                <option value="">None</option>
+                <option value="15">15 minutes before</option>
+                <option value="30">30 minutes before</option>
+                <option value="60">1 hour before</option>
+                <option value="120">2 hours before</option>
+                <option value="1440">1 day before</option>
+                <option value="2880">2 days before</option>
+                <option value="10080">1 week before</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-3 pb-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  data-testid="recurring-checkbox"
+                  type="checkbox"
+                  checked={newIsRecurring}
+                  disabled={!newDueDate}
+                  onChange={(e) => setNewIsRecurring(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                />
+                <span className="text-sm text-gray-700">Repeat</span>
+              </label>
+
+              {newIsRecurring && (
+                <select
+                  data-testid="recurrence-pattern-select"
+                  value={newRecurrencePattern}
+                  onChange={(e) => setNewRecurrencePattern(e.target.value as RecurrencePattern)}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+              )}
             </div>
           </div>
 
@@ -623,9 +1100,15 @@ export default function HomePage() {
                     <TodoCard
                       key={todo.id}
                       todo={todo}
+                      subtasks={subtasksMap[todo.id] ?? []}
+                      subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
                       onDelete={setDeletingId}
+                      onToggleSubtasksExpanded={toggleSubtasksExpanded}
+                      onAddSubtask={handleAddSubtask}
+                      onToggleSubtask={handleToggleSubtask}
+                      onDeleteSubtask={handleDeleteSubtask}
                     />
                   ))}
                 </div>
@@ -641,9 +1124,15 @@ export default function HomePage() {
                     <TodoCard
                       key={todo.id}
                       todo={todo}
+                      subtasks={subtasksMap[todo.id] ?? []}
+                      subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
                       onDelete={setDeletingId}
+                      onToggleSubtasksExpanded={toggleSubtasksExpanded}
+                      onAddSubtask={handleAddSubtask}
+                      onToggleSubtask={handleToggleSubtask}
+                      onDeleteSubtask={handleDeleteSubtask}
                     />
                   ))}
                 </div>
@@ -667,9 +1156,15 @@ export default function HomePage() {
                     <TodoCard
                       key={todo.id}
                       todo={todo}
+                      subtasks={subtasksMap[todo.id] ?? []}
+                      subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
                       onDelete={setDeletingId}
+                      onToggleSubtasksExpanded={toggleSubtasksExpanded}
+                      onAddSubtask={handleAddSubtask}
+                      onToggleSubtask={handleToggleSubtask}
+                      onDeleteSubtask={handleDeleteSubtask}
                     />
                   ))}
                 </div>

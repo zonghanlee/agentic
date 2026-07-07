@@ -5,6 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { todoDB, isValidPriority, UpdateTodoDto } from '@/lib/db'
+import { calculateNextDueDate } from '@/lib/timezone'
+
+const VALID_RECURRENCE_PATTERNS = ['daily', 'weekly', 'monthly', 'yearly']
 
 type Params = Promise<{ id: string }>
 
@@ -27,7 +30,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { title, completed, due_date, priority } = body
+  const { title, completed, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes } = body
 
   if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
     return NextResponse.json({ error: 'Title cannot be empty' }, { status: 400 })
@@ -40,11 +43,48 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
     )
   }
 
+  if (
+    recurrence_pattern !== undefined &&
+    recurrence_pattern !== null &&
+    !VALID_RECURRENCE_PATTERNS.includes(recurrence_pattern as string)
+  ) {
+    return NextResponse.json(
+      { error: 'Invalid recurrence pattern. Must be: daily, weekly, monthly, or yearly' },
+      { status: 400 }
+    )
+  }
+
+  const existing = todoDB.findById(todoId, session.userId)
+  if (!existing) {
+    return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
+  }
+
   const dto: UpdateTodoDto = {}
   if (title !== undefined) dto.title = (title as string).trim()
   if (completed !== undefined) dto.completed = Boolean(completed)
   if (due_date !== undefined) dto.due_date = due_date as string | null
   if (priority !== undefined && isValidPriority(priority)) dto.priority = priority
+  if (is_recurring !== undefined) dto.is_recurring = Boolean(is_recurring)
+  if (recurrence_pattern !== undefined) dto.recurrence_pattern = (recurrence_pattern as string | null) ?? null
+  if (reminder_minutes !== undefined) dto.reminder_minutes = (reminder_minutes as number | null) ?? null
+
+  // When reminder changes, reset last_notification_sent so the new reminder can fire
+  if (reminder_minutes !== undefined && reminder_minutes !== existing.reminder_minutes) {
+    dto.last_notification_sent = null
+  }
+
+  // Spawn the next recurring instance when completing a recurring todo
+  if (dto.completed === true && !existing.completed && existing.is_recurring && existing.due_date) {
+    const nextDue = calculateNextDueDate(existing.due_date, existing.recurrence_pattern!)
+    todoDB.create(session.userId, {
+      title: existing.title,
+      due_date: nextDue,
+      priority: existing.priority,
+      is_recurring: true,
+      recurrence_pattern: existing.recurrence_pattern ?? undefined,
+      reminder_minutes: existing.reminder_minutes ?? undefined,
+    })
+  }
 
   const updated = todoDB.update(todoId, session.userId, dto)
   if (!updated) {

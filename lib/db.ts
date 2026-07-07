@@ -32,10 +32,53 @@ export interface Todo {
   created_at: string
 }
 
+export type ReminderOption = 15 | 30 | 60 | 120 | 1440 | 2880 | 10080
+
+export const REMINDER_LABELS: Record<number, string> = {
+  15: '15 minutes before',
+  30: '30 minutes before',
+  60: '1 hour before',
+  120: '2 hours before',
+  1440: '1 day before',
+  2880: '2 days before',
+  10080: '1 week before',
+}
+
+export const REMINDER_BADGE: Record<number, string> = {
+  15: '15m',
+  30: '30m',
+  60: '1h',
+  120: '2h',
+  1440: '1d',
+  2880: '2d',
+  10080: '1w',
+}
+
+export interface Subtask {
+  id: number
+  todo_id: number
+  title: string
+  completed: boolean
+  position: number
+  created_at: string
+}
+
+export interface CreateSubtaskDto {
+  title: string
+}
+
+export interface UpdateSubtaskDto {
+  title?: string
+  completed?: boolean
+}
+
 export interface CreateTodoDto {
   title: string
   due_date?: string | null
   priority?: Priority
+  is_recurring?: boolean
+  recurrence_pattern?: RecurrencePattern | null
+  reminder_minutes?: number | null
 }
 
 export interface UpdateTodoDto {
@@ -43,6 +86,10 @@ export interface UpdateTodoDto {
   completed?: boolean
   due_date?: string | null
   priority?: Priority
+  is_recurring?: boolean
+  recurrence_pattern?: RecurrencePattern | null
+  reminder_minutes?: number | null
+  last_notification_sent?: string | null
 }
 
 // Internal raw row as returned by SQLite (booleans stored as 0/1)
@@ -90,6 +137,15 @@ db.exec(`
     last_notification_sent TEXT,
     created_at             TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS subtasks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    todo_id    INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    completed  INTEGER NOT NULL DEFAULT 0,
+    position   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `)
 
 // ---------------------------------------------------------------------------
@@ -109,6 +165,23 @@ function mapTodo(row: RawTodo): Todo {
     is_recurring: row.is_recurring === 1,
     priority: row.priority as Priority,
     recurrence_pattern: row.recurrence_pattern as RecurrencePattern | null,
+  }
+}
+
+// Internal raw subtask row as returned by SQLite
+interface RawSubtask {
+  id: number
+  todo_id: number
+  title: string
+  completed: number
+  position: number
+  created_at: string
+}
+
+function mapSubtask(row: RawSubtask): Subtask {
+  return {
+    ...row,
+    completed: row.completed === 1,
   }
 }
 
@@ -170,11 +243,19 @@ export const todoDB = {
   create(userId: number, dto: CreateTodoDto): Todo {
     const row = db
       .prepare(
-        `INSERT INTO todos (user_id, title, due_date, priority)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO todos (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
-      .get(userId, dto.title, dto.due_date ?? null, dto.priority ?? 'medium') as RawTodo
+      .get(
+        userId,
+        dto.title,
+        dto.due_date ?? null,
+        dto.priority ?? 'medium',
+        dto.is_recurring ? 1 : 0,
+        dto.recurrence_pattern ?? null,
+        dto.reminder_minutes ?? null
+      ) as RawTodo
     return mapTodo(row)
   },
 
@@ -199,6 +280,22 @@ export const todoDB = {
       sets.push('priority = ?')
       values.push(dto.priority)
     }
+    if (dto.is_recurring !== undefined) {
+      sets.push('is_recurring = ?')
+      values.push(dto.is_recurring ? 1 : 0)
+    }
+    if (dto.recurrence_pattern !== undefined) {
+      sets.push('recurrence_pattern = ?')
+      values.push(dto.recurrence_pattern)
+    }
+    if (dto.reminder_minutes !== undefined) {
+      sets.push('reminder_minutes = ?')
+      values.push(dto.reminder_minutes)
+    }
+    if (dto.last_notification_sent !== undefined) {
+      sets.push('last_notification_sent = ?')
+      values.push(dto.last_notification_sent)
+    }
 
     if (sets.length === 0) {
       return todoDB.findById(id, userId)
@@ -220,6 +317,91 @@ export const todoDB = {
     const info = db
       .prepare('DELETE FROM todos WHERE id = ? AND user_id = ?')
       .run(id, userId)
+    return info.changes > 0
+  },
+
+  findPendingReminders(userId: number, now: Date): Todo[] {
+    const rows = db
+      .prepare(`
+        SELECT * FROM todos
+        WHERE user_id = ?
+          AND completed = 0
+          AND reminder_minutes IS NOT NULL
+          AND due_date IS NOT NULL
+          AND last_notification_sent IS NULL
+          AND datetime(due_date, '-' || reminder_minutes || ' minutes') <= ?
+      `)
+      .all(userId, now.toISOString()) as RawTodo[]
+    return rows.map(mapTodo)
+  },
+
+  markNotificationSent(ids: number[], sentAt: string): void {
+    if (ids.length === 0) return
+    const placeholders = ids.map(() => '?').join(', ')
+    db
+      .prepare(`UPDATE todos SET last_notification_sent = ? WHERE id IN (${placeholders})`)
+      .run(sentAt, ...ids)
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Subtask operations
+// ---------------------------------------------------------------------------
+
+export const subtaskDB = {
+  findByTodoId(todoId: number): Subtask[] {
+    const rows = db
+      .prepare('SELECT * FROM subtasks WHERE todo_id = ? ORDER BY position ASC, created_at ASC')
+      .all(todoId) as RawSubtask[]
+    return rows.map(mapSubtask)
+  },
+
+  findAllForUser(userId: number): Subtask[] {
+    const rows = db
+      .prepare(`
+        SELECT s.* FROM subtasks s
+        JOIN todos t ON t.id = s.todo_id
+        WHERE t.user_id = ?
+        ORDER BY s.position ASC, s.created_at ASC
+      `)
+      .all(userId) as RawSubtask[]
+    return rows.map(mapSubtask)
+  },
+
+  create(todoId: number, dto: CreateSubtaskDto): Subtask {
+    const { max } = db
+      .prepare('SELECT COALESCE(MAX(position), -1) as max FROM subtasks WHERE todo_id = ?')
+      .get(todoId) as { max: number }
+    const row = db
+      .prepare(`INSERT INTO subtasks (todo_id, title, position) VALUES (?, ?, ?) RETURNING *`)
+      .get(todoId, dto.title.trim(), max + 1) as RawSubtask
+    return mapSubtask(row)
+  },
+
+  update(id: number, todoId: number, dto: UpdateSubtaskDto): Subtask | null {
+    const sets: string[] = []
+    const values: unknown[] = []
+    if (dto.title !== undefined) {
+      sets.push('title = ?')
+      values.push(dto.title)
+    }
+    if (dto.completed !== undefined) {
+      sets.push('completed = ?')
+      values.push(dto.completed ? 1 : 0)
+    }
+    if (sets.length === 0) return null
+    values.push(id, todoId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = db
+      .prepare(`UPDATE subtasks SET ${sets.join(', ')} WHERE id = ? AND todo_id = ? RETURNING *`)
+      .get(...(values as any[])) as RawSubtask | undefined
+    return row ? mapSubtask(row) : null
+  },
+
+  delete(id: number, todoId: number): boolean {
+    const info = db
+      .prepare('DELETE FROM subtasks WHERE id = ? AND todo_id = ?')
+      .run(id, todoId)
     return info.changes > 0
   },
 }

@@ -18,6 +18,7 @@ export async function signIn(page: Page, username = 'testuser') {
 export async function clearTodos(page: Page) {
   const todos: { id: number }[] = await page.evaluate(async () => {
     const res = await fetch('/api/todos')
+    if (!res.ok) return []
     return res.json()
   })
   await Promise.all(

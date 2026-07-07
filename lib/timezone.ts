@@ -33,6 +33,31 @@ export function isoToSingapore(isoString: string): string {
 }
 
 /**
+ * Calculates the next due date for a recurring todo based on the recurrence pattern.
+ */
+export function calculateNextDueDate(
+  currentDueDate: string,
+  pattern: 'daily' | 'weekly' | 'monthly' | 'yearly'
+): string {
+  const date = new Date(currentDueDate)
+  switch (pattern) {
+    case 'daily':
+      date.setDate(date.getDate() + 1)
+      break
+    case 'weekly':
+      date.setDate(date.getDate() + 7)
+      break
+    case 'monthly':
+      date.setMonth(date.getMonth() + 1)
+      break
+    case 'yearly':
+      date.setFullYear(date.getFullYear() + 1)
+      break
+  }
+  return date.toISOString()
+}
+
+/**
  * Returns a relative due-date label and Tailwind colour class for display on a todo card.
  */
 export function getRelativeDueLabel(dueDateIso: string): { label: string; color: string } {
