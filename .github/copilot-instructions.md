@@ -17,7 +17,7 @@ This is a **Next.js 16** todo application with WebAuthn authentication, using **
 - **WebAuthn only** - no traditional passwords
 - Uses `@simplewebauthn/server` and `@simplewebauthn/browser` libraries
 - Session tokens stored as HTTP-only cookies via `lib/auth.ts` (JWT with 7-day expiry)
-- Middleware (`middleware.ts`) protects `/` and `/calendar` routes
+- Route protection (`proxy.ts` — Next.js 16 renamed "Middleware" to "Proxy") protects `/` and `/calendar` routes
 - When modifying authenticator logic, **always use `?? 0` for counter field** to handle undefined values:
   ```typescript
   counter: authenticator.counter ?? 0
@@ -32,7 +32,7 @@ This is a **Next.js 16** todo application with WebAuthn authentication, using **
 **Buffer Encoding:** WebAuthn credentials require base64/base64url conversions. Use `isoBase64URL` from `@simplewebauthn/server/helpers` for credential_id handling.
 
 ### 2. Database Architecture
-**Single source of truth**: `lib/db.ts` exports all database interfaces and CRUD operations (~700 lines).
+**Single source of truth**: `lib/db.ts` exports all database interfaces and CRUD operations (~800 lines).
 
 **Technology:** `better-sqlite3` - synchronous SQLite library (no async/await needed for DB operations). Database file: `todos.db` in project root.
 
@@ -47,16 +47,25 @@ Key tables:
 - Add interface to `lib/db.ts` first
 - Export DB object with CRUD methods (e.g., `todoDB`, `tagDB`)
 - Use prepared statements for all queries (`db.prepare()`)
-- Handle migrations with try-catch `ALTER TABLE` blocks in `db.exec()`
+- Schema is currently created via `CREATE TABLE IF NOT EXISTS` in a single `db.exec()` call; no
+  `ALTER TABLE` migration mechanism exists yet — introduce a try-catch `ALTER TABLE` pattern if you
+  need to add a column to an existing table
 - **All DB operations are synchronous** - no promises/async needed for queries
 
 ### 3. Singapore Timezone (Mandatory)
-All date/time operations **must** use `lib/timezone.ts`:
+Getting the **current moment** must go through `lib/timezone.ts`, not a bare `new Date()`:
 ```typescript
 import { getSingaporeNow, formatSingaporeDate } from '@/lib/timezone';
 const now = getSingaporeNow(); // NOT new Date()
 ```
 This applies to: due dates, reminders, recurring todos, holiday calculations.
+
+Parsing an existing date string/value (`new Date(someIsoString)`) or constructing a calendar date from
+year/month/day components (`new Date(year, month, day)`) is fine and used throughout, including inside
+`lib/timezone.ts` itself — the rule is specifically about not fetching "now" directly. Note also that
+`getSingaporeNow()` round-trips through `toLocaleString`, which can shift the absolute instant if the
+server's system timezone isn't Singapore — don't use it for instant-vs-instant comparisons (e.g. WebAuthn
+challenge expiry in `app/api/auth/*-verify/route.ts`), where a plain `new Date()` comparison is correct.
 
 ### 4. API Route Patterns
 All API routes follow this structure:
@@ -75,7 +84,7 @@ export async function GET/POST/PUT/DELETE(request: NextRequest) {
 ### 5. Feature-Rich Todo Model
 Todos support: priority (high/medium/low), recurring patterns (daily/weekly/monthly/yearly), reminders (15m/30m/1h/2h/1d/2d/1w before), subtasks with progress tracking, and tags.
 
-**When completing recurring todos**: Create next instance with same priority, tags, reminder offset, and recurrence pattern. See `app/api/todos/[id]/route.ts` PUT handler.
+**When completing recurring todos**: Create next instance with same priority, reminder offset, and recurrence pattern (tags are not currently carried over). See `app/api/todos/[id]/route.ts` PUT handler.
 
 ## Development Workflows
 
@@ -115,7 +124,8 @@ sqlite3 todos.db
 ### 1. Client vs Server Components
 - Main pages (`app/page.tsx`, `app/calendar/page.tsx`) are `'use client'` - they manage state and fetch from API routes
 - API routes handle all database operations server-side
-- Never import `lib/db.ts` directly in client components
+- Never add a runtime import of `lib/db.ts` in client components — `import type { ... } from '@/lib/db'`
+  is fine (erased at compile time, doesn't pull `better-sqlite3` into the client bundle)
 
 ### 2. Error Handling in API Routes
 Always use null coalescing for potentially undefined database fields:
@@ -123,10 +133,10 @@ Always use null coalescing for potentially undefined database fields:
 counter: authenticator.counter ?? 0
 reminder_minutes: todo.reminder_minutes ?? null
 ```
-Recent fix: `app/api/auth/login-verify/route.ts` lines 56 and 93.
+Example: `app/api/auth/login-verify/route.ts:65` and `app/api/auth/register-verify/route.ts:58`.
 
 ### 3. Monolithic UI Pattern
-Main todo page (`app/page.tsx`) is a large (~2200 lines) client component with all features:
+Main todo page (`app/page.tsx`) is a large (~2400 lines) client component with all features:
 - Single file handles: todos, subtasks, tags, templates, filtering, export/import
 - State management via React hooks (no external state library)
 - All API calls made directly from component using fetch
@@ -163,7 +173,7 @@ import { Priority, RecurrencePattern, Todo, Template } from '@/lib/db';
 
 ## Common Pitfalls
 
-1. **Don't use `new Date()` directly** - always use `getSingaporeNow()` from `lib/timezone.ts`
+1. **Don't fetch the current moment with a bare `new Date()`** - use `getSingaporeNow()` from `lib/timezone.ts` instead (parsing/constructing dates from existing values is fine)
 2. **params is async in Next.js 16** - use `const { id } = await params`
 3. **Database fields can be null/undefined** - use `?? 0` or `|| null` when passing to functions
 4. **Recurring todos need special handling** - see PUT `/api/todos/[id]` for completion logic
@@ -171,10 +181,10 @@ import { Priority, RecurrencePattern, Todo, Template } from '@/lib/db';
 
 ## File Reference
 
-- **Auth**: `lib/auth.ts`, `middleware.ts`, `app/api/auth/**`
-- **Database**: `lib/db.ts` (single file, ~700 lines)
+- **Auth**: `lib/auth.ts`, `proxy.ts`, `app/api/auth/**`
+- **Database**: `lib/db.ts` (single file, ~800 lines)
 - **Timezone**: `lib/timezone.ts`
-- **Main UI**: `app/page.tsx` (~2200 lines, feature-rich)
+- **Main UI**: `app/page.tsx` (~2400 lines, feature-rich)
 - **API Routes**: `app/api/**/*.ts` (RESTful structure)
 - **Tests**: `tests/*.spec.ts`, `tests/helpers.ts`
 - **Documentation**: `USER_GUIDE.md` (comprehensive 2000+ line feature guide)
