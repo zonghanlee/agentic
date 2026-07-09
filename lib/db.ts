@@ -90,6 +90,65 @@ export interface UpdateSubtaskDto {
   completed?: boolean
 }
 
+export interface SubtaskTemplate {
+  title: string
+  position: number
+}
+
+export interface Template {
+  id: number
+  user_id: number
+  name: string
+  description: string | null
+  category: string | null
+  title_template: string
+  priority: Priority
+  is_recurring: boolean
+  recurrence_pattern: RecurrencePattern | null
+  reminder_minutes: number | null
+  subtasks_json: string
+  created_at: string
+}
+
+export interface CreateTemplateDto {
+  name: string
+  description?: string | null
+  category?: string | null
+  title_template: string
+  priority?: Priority
+  is_recurring?: boolean
+  recurrence_pattern?: RecurrencePattern | null
+  reminder_minutes?: number | null
+  subtasks?: SubtaskTemplate[]
+}
+
+// Internal raw template row as returned by SQLite
+interface RawTemplate {
+  id: number
+  user_id: number
+  name: string
+  description: string | null
+  category: string | null
+  title_template: string
+  priority: string
+  is_recurring: number
+  recurrence_pattern: string | null
+  reminder_minutes: number | null
+  subtasks_json: string
+  created_at: string
+}
+
+export interface Holiday {
+  id: number
+  date: string
+  name: string
+}
+
+export interface ExportedTodo extends Todo {
+  subtasks: Subtask[]
+  tags: Tag[]
+}
+
 export interface CreateTodoDto {
   title: string
   due_date?: string | null
@@ -179,6 +238,28 @@ db.exec(`
     tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (todo_id, tag_id)
   );
+
+  CREATE TABLE IF NOT EXISTS templates (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name                TEXT NOT NULL,
+    description         TEXT,
+    category            TEXT,
+    title_template      TEXT NOT NULL,
+    priority            TEXT NOT NULL DEFAULT 'medium',
+    is_recurring        INTEGER NOT NULL DEFAULT 0,
+    recurrence_pattern  TEXT,
+    reminder_minutes    INTEGER,
+    subtasks_json       TEXT NOT NULL DEFAULT '[]',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS holidays (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    date    TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    UNIQUE(date, name)
+  );
 `)
 
 // ---------------------------------------------------------------------------
@@ -221,6 +302,15 @@ function mapSubtask(row: RawSubtask): Subtask {
   return {
     ...row,
     completed: row.completed === 1,
+  }
+}
+
+function mapTemplate(row: RawTemplate): Template {
+  return {
+    ...row,
+    priority: row.priority as Priority,
+    is_recurring: row.is_recurring === 1,
+    recurrence_pattern: row.recurrence_pattern as RecurrencePattern | null,
   }
 }
 
@@ -525,5 +615,68 @@ export const tagDB = {
       ids.forEach((tagId) => insert.run(todoId, tagId))
     })
     replace(tagIds)
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Template operations (PRP 07)
+// ---------------------------------------------------------------------------
+
+export const templateDB = {
+  findAll(userId: number): Template[] {
+    const rows = db
+      .prepare('SELECT * FROM templates WHERE user_id = ? ORDER BY category ASC, name ASC')
+      .all(userId) as RawTemplate[]
+    return rows.map(mapTemplate)
+  },
+
+  findById(id: number, userId: number): Template | null {
+    const row = db
+      .prepare('SELECT * FROM templates WHERE id = ? AND user_id = ?')
+      .get(id, userId) as RawTemplate | undefined
+    return row ? mapTemplate(row) : null
+  },
+
+  create(userId: number, dto: CreateTemplateDto): Template {
+    const subtasksJson = JSON.stringify(dto.subtasks ?? [])
+    const row = db
+      .prepare(
+        `INSERT INTO templates
+           (user_id, name, description, category, title_template,
+            priority, is_recurring, recurrence_pattern, reminder_minutes, subtasks_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`
+      )
+      .get(
+        userId,
+        dto.name.trim(),
+        dto.description ?? null,
+        dto.category ?? null,
+        dto.title_template.trim(),
+        dto.priority ?? 'medium',
+        dto.is_recurring ? 1 : 0,
+        dto.recurrence_pattern ?? null,
+        dto.reminder_minutes ?? null,
+        subtasksJson
+      ) as RawTemplate
+    return mapTemplate(row)
+  },
+
+  delete(id: number, userId: number): boolean {
+    const info = db.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?').run(id, userId)
+    return info.changes > 0
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Holiday operations (PRP 10)
+// ---------------------------------------------------------------------------
+
+export const holidayDB = {
+  findByMonth(year: number, month: number): Holiday[] {
+    const prefix = `${year}-${String(month).padStart(2, '0')}`
+    return db
+      .prepare('SELECT * FROM holidays WHERE date LIKE ? ORDER BY date ASC')
+      .all(`${prefix}-%`) as Holiday[]
   },
 }

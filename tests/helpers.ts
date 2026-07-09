@@ -46,6 +46,22 @@ export async function clearTags(page: Page) {
   )
 }
 
+/** Deletes all templates for the currently signed-in user via the API. */
+export async function clearTemplates(page: Page) {
+  const templates: { id: number }[] = await page.evaluate(async () => {
+    const res = await fetch('/api/templates')
+    if (!res.ok) return []
+    return res.json()
+  })
+  await Promise.all(
+    templates.map((t) =>
+      page.evaluate(async (id) => {
+        await fetch(`/api/templates/${id}`, { method: 'DELETE' })
+      }, t.id)
+    )
+  )
+}
+
 /** Creates a todo via the UI form and waits for it to appear. */
 export async function createTodo(
   page: Page,

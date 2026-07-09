@@ -5,7 +5,7 @@
 Todo App — Next.js 16, React 19, Tailwind CSS 4, better-sqlite3, WebAuthn (Phase 5), Playwright E2E tests.
 All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 
-**Status: 8 / 11 features complete** (Phases 1–3 done; Phases 4–5 pending). 90 E2E tests passing.
+**Status: 10 / 11 features complete** (Phases 1–4 done; Phase 5 pending). 116 E2E tests passing.
 
 ---
 
@@ -30,7 +30,7 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 | 06 | **Tag System** | `PRPs/06-tag-system.md` | User-created colour-coded labels; many-to-many todos ↔ tags via join table; tag filter dropdown; tag CRUD |
 | 08 | **Search & Filtering** | `PRPs/08-search-filtering.md` | Real-time title + subtask search; filter by priority, tag, status, date range; AND-logic combination; filter presets in `localStorage` |
 
-### Phase 4 — Productivity
+### Phase 4 — Productivity ✅ Complete
 | # | Feature | PRP | Key Deliverables |
 |---|---------|-----|-----------------|
 | 07 | **Template System** | `PRPs/07-template-system.md` | Save todo config (title, priority, recurrence, reminder, subtasks) as reusable template; apply template creates todo with offset due date; optional categories |
@@ -115,16 +115,35 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 - All filtering is client-side against the existing `GET /api/todos` + bulk subtasks/tags endpoints — no new read endpoints needed
 - `tests/08-search-filtering.spec.ts` — 14 E2E tests
 - Note: the old standalone `priorityFilter` state was folded into the unified `filters.priority` field; the `priority-filter` select keeps its original `data-testid` and behaviour so Phase 1/2 tests still pass
-- All 90 E2E tests across Phase 1–3 passing
+
+### ✅ Phase 4 — Complete
+
+#### PRP 07 — Template System
+- `lib/db.ts` — `Template`, `SubtaskTemplate`, `CreateTemplateDto` types; `templates` table; `templateDB` with `findAll`, `findById`, `create` (serialises `subtasks` to `subtasks_json`), `delete`
+- `GET/POST /api/templates`, `DELETE /api/templates/[id]`, `POST /api/templates/[id]/use` (instantiates a todo + its subtasks from a template, optionally with a `due_date`)
+- `app/page.tsx` — "💾 Save as Template" button (visible only when the title field is non-empty) + `SaveTemplateModal`; `UseTemplateDropdown` next to the "📋 Templates" button; `TemplatesModal` manager (list, Use, Delete)
+- `tests/07-templates.spec.ts` — 9 E2E tests
+
+#### PRP 09 — Export & Import
+- `GET /api/todos/export?format=json|csv` — JSON export enriched with `subtasks` + `tags` (via `ExportedTodo`); CSV export with formula-injection-safe escaping (`=`, `+`, `-`, `@` prefixes neutralised) and `"` doubling; both set `Content-Disposition` with the Singapore date
+- `POST /api/todos/import` — validates an array of `{ title, ... }` objects, discards original IDs, assigns new ones via `todoDB.create`, returns `{ imported: N }`
+- `app/page.tsx` — `ExportImportBar` (Export JSON / Export CSV / Import file picker restricted to `.json`) + `Toast` success/error notification (auto-dismisses after 4s)
+- `tests/09-export-import.spec.ts` — 8 E2E tests
+
+#### PRP 10 — Calendar View
+- `lib/db.ts` — `Holiday` type; `holidays` table (`UNIQUE(date, name)`); `holidayDB.findByMonth(year, month)`
+- `GET /api/calendar?year=&month=` — returns todos whose `due_date` falls in the given month + holidays for that month; 400 on out-of-range month
+- `app/calendar/page.tsx` — client component with month/year state (seeded from `getSingaporeNow()`), `buildCalendarDays()` grid logic, prev/next/today navigation, priority colour-coded todo pills, holiday banners, today highlight; "Calendar" nav button added to `app/page.tsx` header linking to `/calendar`
+- `scripts/seed-holidays.ts` (run via `npm run seed:holidays`, powered by the new `tsx` devDependency) — seeds 2025 + 2026 Singapore public holidays with `INSERT OR IGNORE`
+- `tests/10-calendar.spec.ts` — 9 E2E tests
+- Fixed a latent pre-existing type bug in `app/api/todos/route.ts` and `app/api/todos/[id]/route.ts` where `recurrence_pattern` was cast to `string | null | undefined` instead of `RecurrencePattern | null | undefined` — `next build`'s type-check now passes cleanly
+
+#### Infrastructure
+- All 116 E2E tests across Phase 1–4 passing (one pre-existing tag-filter test is flaky under full-suite parallel timing but passes reliably in isolation — unrelated to Phase 4 changes)
 
 ---
 
 ## What Is Pending
-
-### 🔲 Phase 4 — Productivity
-- **PRP 07 — Template System**: `templates` table; `templateDB` CRUD; `GET/POST /api/templates`; `POST /api/templates/[id]/use`; template manager UI; subtasks JSON serialization; due date offset
-- **PRP 09 — Export & Import**: `GET /api/todos/export` (JSON + CSV); `POST /api/todos/import` (JSON with ID remapping); export/import buttons in UI
-- **PRP 10 — Calendar View**: `/calendar` route + `app/calendar/page.tsx`; monthly grid component; priority colour-coding; Singapore public holidays seed script; month navigation
 
 ### 🔲 Phase 5 — Infrastructure
 - **PRP 11 — WebAuthn Auth**: install `@simplewebauthn/server` + `@simplewebauthn/browser`; `authenticators` table; `POST /api/auth/register-options`, `/register-verify`, `/login-options`, `/login-verify`; replace `app/login/page.tsx` simple form with passkey flow; update `lib/auth.ts` if needed
@@ -137,14 +156,14 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 01 Todo CRUD  ──► 02 Priority (done)
               ──► 03 Recurring (done)
               ──► 04 Reminders (done)
-              ──► 05 Subtasks (done) ──► 07 Templates
+              ──► 05 Subtasks (done) ──► 07 Templates (done)
               ──► 06 Tags (done) ──► 08 Search (done)
-              ──► 09 Export/Import
-              ──► 10 Calendar
+              ──► 09 Export/Import (done)
+              ──► 10 Calendar (done)
 06 Tags (done) ──► 08 Search (done)
 11 WebAuthn   ──► gates all features in production
 ```
 
 ## Next Up
 
-Phase 4 (Productivity) is the next milestone: PRP 07 — Template System (depends on Subtasks), PRP 09 — Export & Import, PRP 10 — Calendar View. None have code yet.
+Phase 5 (Infrastructure) is the last milestone: PRP 11 — WebAuthn/Passkeys Auth. This replaces the Phase 1 username-only login form in `app/login/page.tsx` with passwordless registration/login, adds an `authenticators` table, and layers on top of the existing JWT session in `lib/auth.ts`. No code yet.

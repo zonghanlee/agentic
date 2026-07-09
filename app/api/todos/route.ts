@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { todoDB, isValidPriority } from '@/lib/db'
+import { todoDB, isValidPriority, RecurrencePattern } from '@/lib/db'
 
 const VALID_RECURRENCE_PATTERNS = ['daily', 'weekly', 'monthly', 'yearly']
 
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     due_date: (due_date as string | null | undefined) ?? null,
     priority: isValidPriority(priority) ? priority : 'medium',
     is_recurring: Boolean(is_recurring),
-    recurrence_pattern: (recurrence_pattern as string | null | undefined) ?? null,
+    recurrence_pattern: (recurrence_pattern as RecurrencePattern | null | undefined) ?? null,
     reminder_minutes: (reminder_minutes as number | null | undefined) ?? null,
   })
 

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:holidays": "tsx scripts/seed-holidays.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1",
@@ -23,10 +24,12 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.1.7",
+    "tsx": "^4.19.2",
     "typescript": "^5"
   },
   "allowScripts": {
     "better-sqlite3@11.10.0": true,
-    "sharp@0.34.5": true
+    "sharp@0.34.5": true,
+    "esbuild@0.28.1": true
   }
 }

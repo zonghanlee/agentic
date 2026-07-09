@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
-import { todoDB, isValidPriority, UpdateTodoDto } from '@/lib/db'
+import { todoDB, isValidPriority, RecurrencePattern, UpdateTodoDto } from '@/lib/db'
 import { calculateNextDueDate } from '@/lib/timezone'
 
 const VALID_RECURRENCE_PATTERNS = ['daily', 'weekly', 'monthly', 'yearly']
@@ -65,7 +65,7 @@ export async function PUT(request: NextRequest, { params }: { params: Params }) 
   if (due_date !== undefined) dto.due_date = due_date as string | null
   if (priority !== undefined && isValidPriority(priority)) dto.priority = priority
   if (is_recurring !== undefined) dto.is_recurring = Boolean(is_recurring)
-  if (recurrence_pattern !== undefined) dto.recurrence_pattern = (recurrence_pattern as string | null) ?? null
+  if (recurrence_pattern !== undefined) dto.recurrence_pattern = (recurrence_pattern as RecurrencePattern | null) ?? null
   if (reminder_minutes !== undefined) dto.reminder_minutes = (reminder_minutes as number | null) ?? null
 
   // When reminder changes, reset last_notification_sent so the new reminder can fire

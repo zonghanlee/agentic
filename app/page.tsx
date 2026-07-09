@@ -4,11 +4,14 @@
 // Main todo page — client component managing all todo state and UI.
 // Phase 1: Todo CRUD (PRP 01) + Priority System (PRP 02).
 // Phase 2: Recurring Todos (PRP 03) + Reminders (PRP 04) + Subtasks (PRP 05).
+// Phase 3: Tag System (PRP 06) + Search & Filtering (PRP 08).
+// Phase 4: Template System (PRP 07) + Export & Import (PRP 09) + Calendar nav (PRP 10).
 
-import { useState, useEffect, useMemo, useCallback, FormEvent } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { formatSingaporeDate, getSingaporeNow, getRelativeDueLabel } from '@/lib/timezone'
-import type { Priority, Todo, UpdateTodoDto, RecurrencePattern, Subtask, Tag } from '@/lib/db'
+import type { Priority, Todo, UpdateTodoDto, RecurrencePattern, Subtask, Tag, Template } from '@/lib/db'
 import { useNotifications } from '@/lib/hooks/useNotifications'
 
 // ---------------------------------------------------------------------------
@@ -645,6 +648,283 @@ function SaveFilterModal({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Templates (PRP 07)
+// ---------------------------------------------------------------------------
+
+interface TemplateFormState {
+  title: string
+  priority: Priority
+  isRecurring: boolean
+  pattern: RecurrencePattern
+  reminder: number | null
+}
+
+function SaveTemplateModal({
+  formState,
+  onSave,
+  onClose,
+}: {
+  formState: TemplateFormState
+  onSave: (name: string, description: string, category: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(formState.title)
+  const [description, setDescription] = useState('')
+  const [category, setCategory] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSave() {
+    if (!name.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(name.trim(), description.trim(), category.trim())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save template')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Save as Template</h2>
+        <input
+          data-testid="template-name-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Template name"
+          required
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          data-testid="template-description-input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Description (optional)"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          data-testid="template-category-input"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          placeholder="Category (optional)"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {error && (
+          <p className="text-sm text-red-600 mb-3" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-sm hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="save-template-confirm"
+            disabled={saving || !name.trim()}
+            onClick={handleSave}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm"
+          >
+            {saving ? 'Saving…' : 'Save Template'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TemplatesModal({
+  templates,
+  onUse,
+  onDelete,
+  onClose,
+}: {
+  templates: Template[]
+  onUse: (id: number) => Promise<void>
+  onDelete: (id: number) => Promise<void>
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        data-testid="templates-modal"
+        className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-y-auto p-6"
+      >
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">📋 Templates</h2>
+        {templates.length === 0 && (
+          <p className="text-gray-400 text-sm text-center py-4">No templates saved yet.</p>
+        )}
+        <ul className="space-y-3">
+          {templates.map((t) => (
+            <li key={t.id} className="border border-gray-200 rounded-lg p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900">{t.name}</p>
+                  {t.description && <p className="text-sm text-gray-500">{t.description}</p>}
+                  <div className="flex gap-1.5 mt-1 flex-wrap">
+                    {t.category && (
+                      <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full text-gray-600">
+                        {t.category}
+                      </span>
+                    )}
+                    <PriorityBadge priority={t.priority} />
+                    {t.is_recurring && t.recurrence_pattern && (
+                      <RecurrenceBadge pattern={t.recurrence_pattern} />
+                    )}
+                    {t.reminder_minutes != null && <ReminderBadge minutes={t.reminder_minutes} />}
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    data-testid={`use-template-${t.id}`}
+                    onClick={async () => {
+                      await onUse(t.id)
+                      onClose()
+                    }}
+                    className="text-sm bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded"
+                  >
+                    Use
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`delete-template-${t.id}`}
+                    onClick={() => onDelete(t.id)}
+                    className="text-sm text-red-500 hover:underline"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-4 text-sm text-gray-500 hover:underline"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function UseTemplateDropdown({
+  templates,
+  onSelect,
+}: {
+  templates: Template[]
+  onSelect: (id: number) => void
+}) {
+  if (templates.length === 0) return null
+  return (
+    <select
+      data-testid="use-template-select"
+      defaultValue=""
+      onChange={(e) => {
+        if (e.target.value) onSelect(Number(e.target.value))
+        e.target.value = ''
+      }}
+      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+    >
+      <option value="" disabled>
+        Use Template
+      </option>
+      {templates.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.name}
+          {t.category ? ` (${t.category})` : ''}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Export / Import (PRP 09)
+// ---------------------------------------------------------------------------
+
+function ExportImportBar({ onImport }: { onImport: (file: File) => void }) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function triggerExport(format: 'json' | 'csv') {
+    const link = document.createElement('a')
+    link.href = `/api/todos/export?format=${format}`
+    link.click()
+  }
+
+  return (
+    <div className="flex gap-2 items-center">
+      <button
+        type="button"
+        data-testid="export-json-btn"
+        onClick={() => triggerExport('json')}
+        className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm"
+      >
+        Export JSON
+      </button>
+      <button
+        type="button"
+        data-testid="export-csv-btn"
+        onClick={() => triggerExport('csv')}
+        className="bg-green-800 hover:bg-green-900 text-white px-3 py-1.5 rounded text-sm"
+      >
+        Export CSV
+      </button>
+      <button
+        type="button"
+        data-testid="import-btn"
+        onClick={() => fileInputRef.current?.click()}
+        className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded text-sm"
+      >
+        Import
+      </button>
+      <input
+        ref={fileInputRef}
+        data-testid="import-file-input"
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onImport(file)
+          e.target.value = ''
+        }}
+      />
+    </div>
+  )
+}
+
+function Toast({ message, type }: { message: string; type: 'success' | 'error' }) {
+  return (
+    <div
+      role="status"
+      className={`fixed bottom-4 right-4 px-4 py-3 rounded shadow-lg text-white text-sm z-50 ${
+        type === 'success' ? 'bg-green-600' : 'bg-red-600'
+      }`}
+    >
+      {message}
+    </div>
+  )
+}
+
 function PrioritySelect({
   value,
   onChange,
@@ -1107,6 +1387,20 @@ export default function HomePage() {
     setPresets(loadPresets())
   }, [])
 
+  // Template state (PRP 07)
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false)
+  const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
+
+  // Export / import state (PRP 09)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
   // Modal state
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
@@ -1165,6 +1459,15 @@ export default function HomePage() {
   useEffect(() => {
     fetchTodos()
   }, [fetchTodos])
+
+  const fetchTemplates = useCallback(async () => {
+    const res = await fetch('/api/templates')
+    if (res.ok) setTemplates(await res.json())
+  }, [])
+
+  useEffect(() => {
+    fetchTemplates()
+  }, [fetchTemplates])
 
   // ---------------------------------------------------------------------------
   // CRUD handlers
@@ -1304,6 +1607,81 @@ export default function HomePage() {
   async function handleLogout() {
     await fetch('/api/auth/logout', { method: 'POST' })
     router.push('/login')
+  }
+
+  // ---------------------------------------------------------------------------
+  // Template handlers (PRP 07)
+  // ---------------------------------------------------------------------------
+
+  async function handleSaveTemplate(name: string, description: string, category: string) {
+    const res = await fetch('/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        description: description || undefined,
+        category: category || undefined,
+        title_template: newTitle.trim(),
+        priority: newPriority,
+        is_recurring: newIsRecurring,
+        recurrence_pattern: newIsRecurring ? newRecurrencePattern : null,
+        reminder_minutes: newReminderMinutes,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? 'Failed to save template')
+    setTemplates((prev) => [...prev, data as Template])
+    setSaveTemplateModalOpen(false)
+  }
+
+  const handleUseTemplate = useCallback(
+    async (templateId: number) => {
+      const res = await fetch(`/api/templates/${templateId}/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) return
+      await fetchTodos()
+    },
+    [fetchTodos]
+  )
+
+  async function handleDeleteTemplate(id: number) {
+    const res = await fetch(`/api/templates/${id}`, { method: 'DELETE' })
+    if (!res.ok) return
+    setTemplates((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Export / import handlers (PRP 09)
+  // ---------------------------------------------------------------------------
+
+  async function handleImport(file: File) {
+    let data: unknown
+    try {
+      data = JSON.parse(await file.text())
+    } catch {
+      setToast({ message: 'Invalid JSON file. Please select a valid export file.', type: 'error' })
+      return
+    }
+
+    try {
+      const res = await fetch('/api/todos/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        setToast({ message: result.error ?? 'Failed to import todos', type: 'error' })
+        return
+      }
+      setToast({ message: `Successfully imported ${result.imported} todos`, type: 'success' })
+      await fetchTodos()
+    } catch {
+      setToast({ message: 'Failed to import todos', type: 'error' })
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1551,6 +1929,15 @@ export default function HomePage() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900">📝 Todo App</h1>
           <div className="flex items-center gap-3">
+            <Link href="/calendar">
+              <button
+                type="button"
+                data-testid="calendar-nav-btn"
+                className="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-sm"
+              >
+                Calendar
+              </button>
+            </Link>
             {typeof window !== 'undefined' && 'Notification' in window && (
               notificationsEnabled ? (
                 <span className="bg-green-500 text-white px-3 py-1.5 rounded text-sm flex items-center gap-1">
@@ -1705,6 +2092,17 @@ export default function HomePage() {
             </div>
           )}
 
+          {newTitle.trim() && (
+            <button
+              type="button"
+              data-testid="save-as-template-btn"
+              onClick={() => setSaveTemplateModalOpen(true)}
+              className="text-sm text-blue-600 hover:underline flex items-center gap-1"
+            >
+              💾 Save as Template
+            </button>
+          )}
+
           <button
             type="submit"
             data-testid="add-todo-btn"
@@ -1714,6 +2112,22 @@ export default function HomePage() {
             {creating ? 'Adding…' : 'Add Todo'}
           </button>
         </form>
+
+        {/* Templates & export/import */}
+        <div className="flex flex-wrap gap-3 items-center justify-between">
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
+              data-testid="templates-btn"
+              onClick={() => setTemplatesModalOpen(true)}
+              className="text-sm text-gray-700 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50"
+            >
+              📋 Templates
+            </button>
+            <UseTemplateDropdown templates={templates} onSelect={handleUseTemplate} />
+          </div>
+          <ExportImportBar onImport={handleImport} />
+        </div>
 
         {/* Manage tags */}
         <div className="flex justify-end">
@@ -1924,6 +2338,34 @@ export default function HomePage() {
           onClose={() => setSaveFilterModalOpen(false)}
         />
       )}
+
+      {/* Save template modal */}
+      {saveTemplateModalOpen && (
+        <SaveTemplateModal
+          formState={{
+            title: newTitle,
+            priority: newPriority,
+            isRecurring: newIsRecurring,
+            pattern: newRecurrencePattern,
+            reminder: newReminderMinutes,
+          }}
+          onSave={handleSaveTemplate}
+          onClose={() => setSaveTemplateModalOpen(false)}
+        />
+      )}
+
+      {/* Templates manager modal */}
+      {templatesModalOpen && (
+        <TemplatesModal
+          templates={templates}
+          onUse={handleUseTemplate}
+          onDelete={handleDeleteTemplate}
+          onClose={() => setTemplatesModalOpen(false)}
+        />
+      )}
+
+      {/* Import / export toast */}
+      {toast && <Toast message={toast.message} type={toast.type} />}
     </main>
   )
 }
