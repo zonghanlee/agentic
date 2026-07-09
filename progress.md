@@ -5,6 +5,8 @@
 Todo App — Next.js 16, React 19, Tailwind CSS 4, better-sqlite3, WebAuthn (Phase 5), Playwright E2E tests.
 All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 
+**Status: 8 / 11 features complete** (Phases 1–3 done; Phases 4–5 pending). 90 E2E tests passing.
+
 ---
 
 ## All 11 Features (Full Spec)
@@ -22,7 +24,7 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 | 04 | **Reminders & Notifications** | `PRPs/04-reminders-notifications.md` | Browser push notifications; configurable lead time (15 min – 1 week); polling every minute; fires exactly once per instance via `last_notification_sent` |
 | 05 | **Subtasks & Progress** | `PRPs/05-subtasks-progress.md` | Checklist items per todo; visual progress bar; `X/Y` counter; position ordering; cascade delete with parent |
 
-### Phase 3 — Organisation
+### Phase 3 — Organisation ✅ Complete
 | # | Feature | PRP | Key Deliverables |
 |---|---------|-----|-----------------|
 | 06 | **Tag System** | `PRPs/06-tag-system.md` | User-created colour-coded labels; many-to-many todos ↔ tags via join table; tag filter dropdown; tag CRUD |
@@ -100,13 +102,24 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 - `tests/02-priority.spec.ts` — 10 E2E tests
 - All 65 E2E tests across Phase 1 + Phase 2 passing
 
+### ✅ Phase 3 — Complete
+
+#### PRP 06 — Tag System
+- `lib/db.ts` — `tags` + `todo_tags` tables (both `ON DELETE CASCADE`); `Tag`, `CreateTagDto`, `UpdateTagDto` types; `isValidHexColor()` guard; `tagDB` with `findAll`, `findById`, `create`, `update`, `delete`, `getTagsForTodo`, `getTagsForUser` (bulk join for the client), `setTagsForTodo` (transactional replace)
+- `GET/POST /api/tags`, `PUT/DELETE /api/tags/[id]`, `GET/PUT /api/todos/[id]/tags` (ownership-checked `tagIds` on PUT), `GET /api/todos/tags` (bulk fetch, mirrors the subtasks bulk endpoint)
+- `app/page.tsx` — `TagPill`, `TagModal` (create/edit/delete), `TagFilter` dropdown (hidden when no tags exist); tag pills selectable in the create form and `EditModal`; tag pills rendered on `TodoCard`; `tagsMap` fetched alongside todos/subtasks
+- `tests/06-tags.spec.ts` — 11 E2E tests
+
+#### PRP 08 — Search & Filtering
+- `app/page.tsx` — `FilterState`/`FilterPreset` types, `DEFAULT_FILTERS`, pure `applyFilters()` (query + priority + tag + completion + date range, AND logic), `loadPresets()`/`persistPresets()` (`localStorage`, key `todoFilterPresets`); `SearchBar`, `AdvancedPanel` (status + date range + saved presets), `SaveFilterModal`; `filteredTodos` drives Overdue/Pending/Completed section counts
+- All filtering is client-side against the existing `GET /api/todos` + bulk subtasks/tags endpoints — no new read endpoints needed
+- `tests/08-search-filtering.spec.ts` — 14 E2E tests
+- Note: the old standalone `priorityFilter` state was folded into the unified `filters.priority` field; the `priority-filter` select keeps its original `data-testid` and behaviour so Phase 1/2 tests still pass
+- All 90 E2E tests across Phase 1–3 passing
+
 ---
 
 ## What Is Pending
-
-### 🔲 Phase 3 — Organisation
-- **PRP 06 — Tag System**: `tags` + `todo_tags` tables; `tagDB` CRUD; `GET/POST /api/tags`; `PUT/DELETE /api/tags/[id]`; `POST/DELETE /api/todos/[id]/tags/[tagId]`; tag pill UI; tag filter dropdown
-- **PRP 08 — Search & Filtering**: search input with debounce; filter by tag, status, date range; combined AND logic; `localStorage` filter presets; `useSearchFilter` hook
 
 ### 🔲 Phase 4 — Productivity
 - **PRP 07 — Template System**: `templates` table; `templateDB` CRUD; `GET/POST /api/templates`; `POST /api/templates/[id]/use`; template manager UI; subtasks JSON serialization; due date offset
@@ -125,13 +138,13 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
               ──► 03 Recurring (done)
               ──► 04 Reminders (done)
               ──► 05 Subtasks (done) ──► 07 Templates
-              ──► 06 Tags     ──► 08 Search
+              ──► 06 Tags (done) ──► 08 Search (done)
               ──► 09 Export/Import
               ──► 10 Calendar
-06 Tags       ──► 08 Search
+06 Tags (done) ──► 08 Search (done)
 11 WebAuthn   ──► gates all features in production
 ```
 
 ## Next Up
 
-Phase 3 (Organisation) is the next milestone: PRP 06 — Tag System, then PRP 08 — Search & Filtering (depends on tags). Both have no code yet — `tags`/`todo_tags` tables, `tagDB`, tag routes, and filter UI all need to be built from scratch.
+Phase 4 (Productivity) is the next milestone: PRP 07 — Template System (depends on Subtasks), PRP 09 — Export & Import, PRP 10 — Calendar View. None have code yet.

@@ -54,6 +54,24 @@ export const REMINDER_BADGE: Record<number, string> = {
   10080: '1w',
 }
 
+export interface Tag {
+  id: number
+  user_id: number
+  name: string
+  color: string
+  created_at: string
+}
+
+export interface CreateTagDto {
+  name: string
+  color?: string
+}
+
+export interface UpdateTagDto {
+  name?: string
+  color?: string
+}
+
 export interface Subtask {
   id: number
   todo_id: number
@@ -146,6 +164,21 @@ db.exec(`
     position   INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS tags (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    color      TEXT NOT NULL DEFAULT '#3B82F6',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS todo_tags (
+    todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (todo_id, tag_id)
+  );
 `)
 
 // ---------------------------------------------------------------------------
@@ -156,6 +189,12 @@ const VALID_PRIORITIES: Priority[] = ['high', 'medium', 'low']
 
 export function isValidPriority(value: unknown): value is Priority {
   return typeof value === 'string' && (VALID_PRIORITIES as string[]).includes(value)
+}
+
+const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/
+
+export function isValidHexColor(value: unknown): value is string {
+  return typeof value === 'string' && HEX_COLOR_REGEX.test(value)
 }
 
 function mapTodo(row: RawTodo): Todo {
@@ -403,5 +442,88 @@ export const subtaskDB = {
       .prepare('DELETE FROM subtasks WHERE id = ? AND todo_id = ?')
       .run(id, todoId)
     return info.changes > 0
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Tag operations
+// ---------------------------------------------------------------------------
+
+export const tagDB = {
+  findAll(userId: number): Tag[] {
+    return db
+      .prepare('SELECT * FROM tags WHERE user_id = ? ORDER BY name ASC')
+      .all(userId) as Tag[]
+  },
+
+  create(userId: number, dto: CreateTagDto): Tag {
+    return db
+      .prepare('INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?) RETURNING *')
+      .get(userId, dto.name.trim(), dto.color ?? '#3B82F6') as Tag
+  },
+
+  update(id: number, userId: number, dto: UpdateTagDto): Tag | null {
+    const sets: string[] = []
+    const values: unknown[] = []
+    if (dto.name !== undefined) {
+      sets.push('name = ?')
+      values.push(dto.name.trim())
+    }
+    if (dto.color !== undefined) {
+      sets.push('color = ?')
+      values.push(dto.color)
+    }
+    if (sets.length === 0) return tagDB.findById(id, userId)
+    values.push(id, userId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = db
+      .prepare(`UPDATE tags SET ${sets.join(', ')} WHERE id = ? AND user_id = ? RETURNING *`)
+      .get(...(values as any[])) as Tag | undefined
+    return row ?? null
+  },
+
+  findById(id: number, userId: number): Tag | null {
+    return (
+      (db.prepare('SELECT * FROM tags WHERE id = ? AND user_id = ?').get(id, userId) as
+        | Tag
+        | undefined) ?? null
+    )
+  },
+
+  delete(id: number, userId: number): boolean {
+    const info = db.prepare('DELETE FROM tags WHERE id = ? AND user_id = ?').run(id, userId)
+    return info.changes > 0
+  },
+
+  getTagsForTodo(todoId: number): Tag[] {
+    return db
+      .prepare(
+        `SELECT t.* FROM tags t
+         JOIN todo_tags tt ON tt.tag_id = t.id
+         WHERE tt.todo_id = ?
+         ORDER BY t.name ASC`
+      )
+      .all(todoId) as Tag[]
+  },
+
+  getTagsForUser(userId: number): (Tag & { todo_id: number })[] {
+    return db
+      .prepare(
+        `SELECT t.*, tt.todo_id as todo_id FROM tags t
+         JOIN todo_tags tt ON tt.tag_id = t.id
+         JOIN todos td ON td.id = tt.todo_id
+         WHERE td.user_id = ?
+         ORDER BY t.name ASC`
+      )
+      .all(userId) as (Tag & { todo_id: number })[]
+  },
+
+  setTagsForTodo(todoId: number, tagIds: number[]): void {
+    const insert = db.prepare('INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)')
+    const replace = db.transaction((ids: number[]) => {
+      db.prepare('DELETE FROM todo_tags WHERE todo_id = ?').run(todoId)
+      ids.forEach((tagId) => insert.run(todoId, tagId))
+    })
+    replace(tagIds)
   },
 }

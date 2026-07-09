@@ -8,8 +8,102 @@
 import { useState, useEffect, useMemo, useCallback, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatSingaporeDate, getSingaporeNow, getRelativeDueLabel } from '@/lib/timezone'
-import type { Priority, Todo, UpdateTodoDto, RecurrencePattern, Subtask } from '@/lib/db'
+import type { Priority, Todo, UpdateTodoDto, RecurrencePattern, Subtask, Tag } from '@/lib/db'
 import { useNotifications } from '@/lib/hooks/useNotifications'
+
+// ---------------------------------------------------------------------------
+// Search & Filtering types (PRP 08)
+// ---------------------------------------------------------------------------
+
+export interface FilterState {
+  query: string
+  priority: Priority | 'all'
+  tagId: number | null
+  completion: 'all' | 'incomplete' | 'completed'
+  dateFrom: string
+  dateTo: string
+}
+
+export interface FilterPreset {
+  id: string
+  name: string
+  filters: FilterState
+}
+
+const DEFAULT_FILTERS: FilterState = {
+  query: '',
+  priority: 'all',
+  tagId: null,
+  completion: 'all',
+  dateFrom: '',
+  dateTo: '',
+}
+
+const PRESETS_KEY = 'todoFilterPresets'
+
+function loadPresets(): FilterPreset[] {
+  try {
+    return JSON.parse(localStorage.getItem(PRESETS_KEY) ?? '[]')
+  } catch {
+    return []
+  }
+}
+
+function persistPresets(presets: FilterPreset[]): void {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets))
+  } catch {
+    // localStorage unavailable (e.g. private mode) — fail silently
+  }
+}
+
+function isFilterActive(filters: FilterState): boolean {
+  return (
+    filters.query !== '' ||
+    filters.priority !== 'all' ||
+    filters.tagId !== null ||
+    filters.completion !== 'all' ||
+    filters.dateFrom !== '' ||
+    filters.dateTo !== ''
+  )
+}
+
+function applyFilters(
+  todos: Todo[],
+  subtasksMap: Record<number, Subtask[]>,
+  tagsMap: Record<number, Tag[]>,
+  filters: FilterState
+): Todo[] {
+  const q = filters.query.toLowerCase().trim()
+
+  return todos.filter((todo) => {
+    if (q) {
+      const inTitle = todo.title.toLowerCase().includes(q)
+      const inSubtasks = (subtasksMap[todo.id] ?? []).some((s) =>
+        s.title.toLowerCase().includes(q)
+      )
+      if (!inTitle && !inSubtasks) return false
+    }
+
+    if (filters.priority !== 'all' && todo.priority !== filters.priority) return false
+
+    if (filters.tagId !== null) {
+      if (!(tagsMap[todo.id] ?? []).some((t) => t.id === filters.tagId)) return false
+    }
+
+    if (filters.completion === 'incomplete' && todo.completed) return false
+    if (filters.completion === 'completed' && !todo.completed) return false
+
+    if (filters.dateFrom || filters.dateTo) {
+      if (!todo.due_date) return false
+      const due = todo.due_date.slice(0, 10)
+      if (filters.dateFrom && due < filters.dateFrom) return false
+      if (filters.dateTo && due > filters.dateTo) return false
+    }
+
+    return true
+  })
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -177,6 +271,380 @@ function SubtaskPanel({ todoId, subtasks, onAdd, onToggle, onDelete }: SubtaskPa
   )
 }
 
+// ---------------------------------------------------------------------------
+// Tag pill (PRP 06)
+// ---------------------------------------------------------------------------
+
+function TagPill({
+  tag,
+  selected,
+  onClick,
+}: {
+  tag: Tag
+  selected?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`tag-pill-${tag.name}`}
+      onClick={onClick}
+      style={{
+        backgroundColor: selected ? tag.color : 'transparent',
+        borderColor: tag.color,
+        color: selected ? '#fff' : tag.color,
+      }}
+      className="text-xs px-2 py-0.5 rounded-full border font-medium transition-colors max-w-[10rem] truncate"
+    >
+      {selected && '✓ '}
+      {tag.name}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tag management modal (PRP 06)
+// ---------------------------------------------------------------------------
+
+interface TagModalProps {
+  tags: Tag[]
+  onClose: () => void
+  onCreate: (name: string, color: string) => Promise<void>
+  onUpdate: (id: number, name: string, color: string) => Promise<void>
+  onDelete: (id: number) => Promise<void>
+}
+
+function TagModal({ tags, onClose, onCreate, onUpdate, onDelete }: TagModalProps) {
+  const [name, setName] = useState('')
+  const [color, setColor] = useState('#3B82F6')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    try {
+      if (editingId !== null) {
+        await onUpdate(editingId, name.trim(), color)
+      } else {
+        await onCreate(name.trim(), color)
+      }
+      setName('')
+      setColor('#3B82F6')
+      setEditingId(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save tag')
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Manage Tags</h2>
+
+        <form onSubmit={handleSubmit} className="flex gap-2 mb-4">
+          <input
+            data-testid="tag-name-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Tag name"
+            required
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            className="border border-gray-300 rounded-lg px-1 py-1 h-10 w-10 cursor-pointer"
+          />
+          <input
+            type="text"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            placeholder="#3B82F6"
+            pattern="^#[0-9A-Fa-f]{6}$"
+            className="border border-gray-300 rounded-lg px-3 py-2 w-28 font-mono text-sm"
+          />
+          <button
+            type="submit"
+            data-testid="create-tag-btn"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            {editingId ? 'Update' : 'Create Tag'}
+          </button>
+        </form>
+
+        {error && (
+          <p className="text-sm text-red-600 mb-3" role="alert">
+            {error}
+          </p>
+        )}
+
+        <ul className="space-y-2 max-h-64 overflow-y-auto">
+          {tags.map((tag) => (
+            <li key={tag.id} className="flex items-center justify-between">
+              <TagPill tag={tag} selected />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingId(tag.id)
+                    setName(tag.name)
+                    setColor(tag.color)
+                  }}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  data-testid={`delete-tag-${tag.name}`}
+                  onClick={() => onDelete(tag.id)}
+                  className="text-sm text-red-500 hover:underline"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+          {tags.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-4">No tags yet.</p>
+          )}
+        </ul>
+
+        <button
+          type="button"
+          data-testid="close-tag-modal"
+          onClick={onClose}
+          className="mt-4 text-gray-500 hover:underline text-sm"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tag filter dropdown (PRP 06)
+// ---------------------------------------------------------------------------
+
+function TagFilter({
+  tags,
+  value,
+  onChange,
+}: {
+  tags: Tag[]
+  value: number | null
+  onChange: (id: number | null) => void
+}) {
+  if (tags.length === 0) return null
+  return (
+    <select
+      data-testid="tag-filter"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+    >
+      <option value="">All Tags</option>
+      {tags.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Search bar (PRP 08)
+// ---------------------------------------------------------------------------
+
+function SearchBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative flex-1 min-w-48">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+      <input
+        data-testid="search-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search todos and subtasks..."
+        className="w-full border border-gray-300 rounded-lg pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      {value && (
+        <button
+          type="button"
+          data-testid="clear-search-btn"
+          onClick={() => onChange('')}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          aria-label="Clear search"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Advanced filters panel (PRP 08)
+// ---------------------------------------------------------------------------
+
+interface AdvancedPanelProps {
+  filters: FilterState
+  presets: FilterPreset[]
+  onChange: (filters: FilterState) => void
+  onApplyPreset: (preset: FilterPreset) => void
+  onDeletePreset: (id: string) => void
+}
+
+function AdvancedPanel({ filters, presets, onChange, onApplyPreset, onDeletePreset }: AdvancedPanelProps) {
+  return (
+    <div className="border border-gray-200 rounded-lg p-4 mb-3 bg-gray-50">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="text-xs font-medium text-gray-500 block mb-1">Status</label>
+          <select
+            data-testid="completion-filter"
+            value={filters.completion}
+            onChange={(e) =>
+              onChange({ ...filters, completion: e.target.value as FilterState['completion'] })
+            }
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="all">All Todos</option>
+            <option value="incomplete">Incomplete Only</option>
+            <option value="completed">Completed Only</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-gray-500 block mb-1">Due Date From</label>
+          <input
+            data-testid="date-from-input"
+            type="date"
+            value={filters.dateFrom}
+            onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-gray-500 block mb-1">Due Date To</label>
+          <input
+            data-testid="date-to-input"
+            type="date"
+            value={filters.dateTo}
+            onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+      </div>
+
+      {presets.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium text-gray-500 mb-1">Saved Filter Presets</p>
+          <div className="flex flex-wrap gap-2">
+            {presets.map((preset) => (
+              <span
+                key={preset.id}
+                className="flex items-center gap-1 bg-white border border-gray-300 rounded-full px-3 py-1 text-sm"
+              >
+                <button
+                  type="button"
+                  data-testid={`preset-${preset.name}`}
+                  onClick={() => onApplyPreset(preset)}
+                  className="hover:underline"
+                >
+                  {preset.name}
+                </button>
+                <button
+                  type="button"
+                  data-testid={`delete-preset-${preset.name}`}
+                  onClick={() => onDeletePreset(preset.id)}
+                  className="text-gray-400 hover:text-red-500"
+                  aria-label={`Delete preset "${preset.name}"`}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Save filter modal (PRP 08)
+// ---------------------------------------------------------------------------
+
+function SaveFilterModal({
+  filters,
+  onSave,
+  onClose,
+}: {
+  filters: FilterState
+  onSave: (preset: FilterPreset) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+
+  const summary = [
+    filters.query && `Search: "${filters.query}"`,
+    filters.priority !== 'all' && `Priority: ${filters.priority}`,
+    filters.tagId !== null && `Tag ID: ${filters.tagId}`,
+    filters.completion !== 'all' && `Completion: ${filters.completion}`,
+    (filters.dateFrom || filters.dateTo) && `Date: ${filters.dateFrom || '…'} → ${filters.dateTo || '…'}`,
+  ].filter(Boolean) as string[]
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Save Filter Preset</h2>
+        <ul className="text-sm text-gray-600 mb-4 space-y-1">
+          {summary.map((s, i) => (
+            <li key={i}>• {s}</li>
+          ))}
+        </ul>
+        <input
+          data-testid="preset-name-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Preset name"
+          required
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="save-preset-confirm"
+            disabled={!name.trim()}
+            onClick={() => onSave({ id: Date.now().toString(), name: name.trim(), filters })}
+            className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PrioritySelect({
   value,
   onChange,
@@ -209,11 +677,13 @@ function PrioritySelect({
 
 interface EditModalProps {
   todo: Todo
+  tags: Tag[]
+  selectedTagIds: number[]
   onClose: () => void
-  onSave: (id: number, dto: UpdateTodoDto) => Promise<void>
+  onSave: (id: number, dto: UpdateTodoDto, tagIds: number[]) => Promise<void>
 }
 
-function EditModal({ todo, onClose, onSave }: EditModalProps) {
+function EditModal({ todo, tags, selectedTagIds, onClose, onSave }: EditModalProps) {
   const [title, setTitle] = useState(todo.title)
   const [dueDate, setDueDate] = useState(todo.due_date ? todo.due_date.slice(0, 16) : '')
   const [priority, setPriority] = useState<Priority>(todo.priority)
@@ -224,8 +694,13 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(
     todo.reminder_minutes ?? null
   )
+  const [tagIds, setTagIds] = useState<number[]>(selectedTagIds)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  function toggleTag(id: number) {
+    setTagIds((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -240,14 +715,18 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
     setSaving(true)
     setError(null)
     try {
-      await onSave(todo.id, {
-        title: title.trim(),
-        due_date: dueDate || null,
-        priority,
-        is_recurring: isRecurring,
-        recurrence_pattern: isRecurring ? recurrencePattern : null,
-        reminder_minutes: dueDate ? reminderMinutes : null,
-      })
+      await onSave(
+        todo.id,
+        {
+          title: title.trim(),
+          due_date: dueDate || null,
+          priority,
+          is_recurring: isRecurring,
+          recurrence_pattern: isRecurring ? recurrencePattern : null,
+          reminder_minutes: dueDate ? reminderMinutes : null,
+        },
+        tagIds
+      )
       onClose()
     } catch {
       setError('Failed to save. Please try again.')
@@ -258,6 +737,7 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
 
   return (
     <div
+      data-testid="edit-modal"
       className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -376,6 +856,22 @@ function EditModal({ todo, onClose, onSave }: EditModalProps) {
             )}
           </div>
 
+          {tags.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tags</label>
+              <div className="flex flex-wrap gap-1.5">
+                {tags.map((tag) => (
+                  <TagPill
+                    key={tag.id}
+                    tag={tag}
+                    selected={tagIds.includes(tag.id)}
+                    onClick={() => toggleTag(tag.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && (
             <p className="text-sm text-red-600" role="alert">
               {error}
@@ -449,6 +945,7 @@ function DeleteModal({
 interface TodoCardProps {
   todo: Todo
   subtasks: Subtask[]
+  tags: Tag[]
   subtasksExpanded: boolean
   onToggle: (id: number, completed: boolean) => Promise<void>
   onEdit: (todo: Todo) => void
@@ -462,6 +959,7 @@ interface TodoCardProps {
 function TodoCard({
   todo,
   subtasks,
+  tags,
   subtasksExpanded,
   onToggle,
   onEdit,
@@ -508,6 +1006,9 @@ function TodoCard({
             {todo.reminder_minutes != null && (
               <ReminderBadge minutes={todo.reminder_minutes} />
             )}
+            {tags.map((tag) => (
+              <TagPill key={tag.id} tag={tag} selected />
+            ))}
           </div>
           <ProgressBar todoId={todo.id} subtasks={subtasks} />
         </div>
@@ -576,6 +1077,12 @@ export default function HomePage() {
   const [subtasksMap, setSubtasksMap] = useState<Record<number, Subtask[]>>({})
   const [expandedSubtasks, setExpandedSubtasks] = useState<Set<number>>(new Set())
 
+  // Tag state (PRP 06)
+  const [tags, setTags] = useState<Tag[]>([])
+  const [tagsMap, setTagsMap] = useState<Record<number, Tag[]>>({})
+  const [tagModalOpen, setTagModalOpen] = useState(false)
+  const [newSelectedTagIds, setNewSelectedTagIds] = useState<number[]>([])
+
   // Notifications state
   const [notificationsEnabled, setNotificationsEnabled] = useState(false)
   useNotifications(notificationsEnabled)
@@ -590,8 +1097,15 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
-  // Filter state
-  const [priorityFilter, setPriorityFilter] = useState<Priority | 'all'>('all')
+  // Filter state (PRP 08)
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [saveFilterModalOpen, setSaveFilterModalOpen] = useState(false)
+  const [presets, setPresets] = useState<FilterPreset[]>([])
+
+  useEffect(() => {
+    setPresets(loadPresets())
+  }, [])
 
   // Modal state
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null)
@@ -604,9 +1118,11 @@ export default function HomePage() {
   const fetchTodos = useCallback(async () => {
     setFetchError(null)
     try {
-      const [todosRes, subtasksRes] = await Promise.all([
+      const [todosRes, subtasksRes, tagsRes, todoTagsRes] = await Promise.all([
         fetch('/api/todos'),
         fetch('/api/todos/subtasks'),
+        fetch('/api/tags'),
+        fetch('/api/todos/tags'),
       ])
       if (todosRes.status === 401) {
         router.push('/login')
@@ -624,6 +1140,20 @@ export default function HomePage() {
           map[s.todo_id].push(s)
         })
         setSubtasksMap(map)
+      }
+
+      if (tagsRes.ok) {
+        setTags(await tagsRes.json())
+      }
+
+      if (todoTagsRes.ok) {
+        const todoTagsData: (Tag & { todo_id: number })[] = await todoTagsRes.json()
+        const map: Record<number, Tag[]> = {}
+        todoTagsData.forEach(({ todo_id, ...tag }) => {
+          if (!map[todo_id]) map[todo_id] = []
+          map[todo_id].push(tag as Tag)
+        })
+        setTagsMap(map)
       }
     } catch {
       setFetchError('Failed to load todos. Please refresh.')
@@ -668,13 +1198,20 @@ export default function HomePage() {
         setCreateError(data.error ?? 'Failed to create todo')
         return
       }
-      setTodos((prev) => [data as Todo, ...prev].sort(sortTodos))
+      const created = data as Todo
+      setTodos((prev) => [created, ...prev].sort(sortTodos))
+
+      if (newSelectedTagIds.length > 0) {
+        await setTagsForTodo(created.id, newSelectedTagIds)
+      }
+
       setNewTitle('')
       setNewDueDate('')
       setNewPriority('medium')
       setNewIsRecurring(false)
       setNewRecurrencePattern('weekly')
       setNewReminderMinutes(null)
+      setNewSelectedTagIds([])
     } catch {
       setCreateError('Failed to create todo. Please try again.')
     } finally {
@@ -682,21 +1219,37 @@ export default function HomePage() {
     }
   }
 
-  const handleUpdate = useCallback(async (id: number, dto: UpdateTodoDto) => {
-    const res = await fetch(`/api/todos/${id}`, {
+  const setTagsForTodo = useCallback(async (todoId: number, tagIds: number[]) => {
+    const res = await fetch(`/api/todos/${todoId}/tags`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dto),
+      body: JSON.stringify({ tagIds }),
     })
-    if (!res.ok) {
-      const data = await res.json()
-      throw new Error(data.error ?? 'Update failed')
-    }
-    const updated: Todo = await res.json()
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? updated : t)).sort(sortTodos)
-    )
+    if (!res.ok) return
+    const updatedTags: Tag[] = await res.json()
+    setTagsMap((prev) => ({ ...prev, [todoId]: updatedTags }))
   }, [])
+
+  const handleUpdate = useCallback(
+    async (id: number, dto: UpdateTodoDto, tagIds?: number[]) => {
+      const res = await fetch(`/api/todos/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dto),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error ?? 'Update failed')
+      }
+      const updated: Todo = await res.json()
+      setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)).sort(sortTodos))
+
+      if (tagIds !== undefined) {
+        await setTagsForTodo(id, tagIds)
+      }
+    },
+    [setTagsForTodo]
+  )
 
   const handleToggle = useCallback(
     async (id: number, completed: boolean) => {
@@ -729,6 +1282,11 @@ export default function HomePage() {
     setDeletingId(null)
     setTodos((prev) => prev.filter((t) => t.id !== id))
     setSubtasksMap((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setTagsMap((prev) => {
       const next = { ...prev }
       delete next[id]
       return next
@@ -847,6 +1405,87 @@ export default function HomePage() {
   }
 
   // ---------------------------------------------------------------------------
+  // Tag handlers (PRP 06)
+  // ---------------------------------------------------------------------------
+
+  async function handleCreateTag(name: string, color: string) {
+    const res = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? 'Failed to create tag')
+    setTags((prev) => [...prev, data as Tag].sort((a, b) => a.name.localeCompare(b.name)))
+  }
+
+  async function handleUpdateTag(id: number, name: string, color: string) {
+    const res = await fetch(`/api/tags/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? 'Failed to update tag')
+    const updated = data as Tag
+    setTags((prev) =>
+      prev.map((t) => (t.id === id ? updated : t)).sort((a, b) => a.name.localeCompare(b.name))
+    )
+    setTagsMap((prev) => {
+      const next: Record<number, Tag[]> = {}
+      Object.entries(prev).forEach(([todoId, todoTags]) => {
+        next[Number(todoId)] = todoTags.map((t) => (t.id === id ? updated : t))
+      })
+      return next
+    })
+  }
+
+  async function handleDeleteTag(id: number) {
+    const res = await fetch(`/api/tags/${id}`, { method: 'DELETE' })
+    if (!res.ok) return
+    setTags((prev) => prev.filter((t) => t.id !== id))
+    setTagsMap((prev) => {
+      const next: Record<number, Tag[]> = {}
+      Object.entries(prev).forEach(([todoId, todoTags]) => {
+        next[Number(todoId)] = todoTags.filter((t) => t.id !== id)
+      })
+      return next
+    })
+    if (filters.tagId === id) {
+      setFilters((prev) => ({ ...prev, tagId: null }))
+    }
+  }
+
+  function toggleNewSelectedTag(id: number) {
+    setNewSelectedTagIds((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Filter preset handlers (PRP 08)
+  // ---------------------------------------------------------------------------
+
+  function handleClearFilters() {
+    setFilters(DEFAULT_FILTERS)
+  }
+
+  function handleSavePreset(preset: FilterPreset) {
+    const next = [...presets, preset]
+    setPresets(next)
+    persistPresets(next)
+    setSaveFilterModalOpen(false)
+  }
+
+  function handleApplyPreset(preset: FilterPreset) {
+    setFilters(preset.filters)
+  }
+
+  function handleDeletePreset(id: string) {
+    const next = presets.filter((p) => p.id !== id)
+    setPresets(next)
+    persistPresets(next)
+  }
+
+  // ---------------------------------------------------------------------------
   // Sorting & filtering
   // ---------------------------------------------------------------------------
 
@@ -862,11 +1501,8 @@ export default function HomePage() {
   }
 
   const filteredTodos = useMemo(
-    () =>
-      priorityFilter === 'all'
-        ? todos
-        : todos.filter((t) => t.priority === priorityFilter),
-    [todos, priorityFilter]
+    () => applyFilters(todos, subtasksMap, tagsMap, filters),
+    [todos, subtasksMap, tagsMap, filters]
   )
 
   const now = getSingaporeNow()
@@ -1053,6 +1689,22 @@ export default function HomePage() {
             </p>
           )}
 
+          {tags.length > 0 && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Tags</label>
+              <div className="flex flex-wrap gap-1.5">
+                {tags.map((tag) => (
+                  <TagPill
+                    key={tag.id}
+                    tag={tag}
+                    selected={newSelectedTagIds.includes(tag.id)}
+                    onClick={() => toggleNewSelectedTag(tag.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <button
             type="submit"
             data-testid="add-todo-btn"
@@ -1063,16 +1715,27 @@ export default function HomePage() {
           </button>
         </form>
 
-        {/* Priority filter */}
-        <div className="flex items-center gap-3">
-          <label htmlFor="priority-filter" className="text-sm text-gray-600 font-medium">
-            Filter:
-          </label>
+        {/* Manage tags */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            data-testid="manage-tags-btn"
+            onClick={() => setTagModalOpen(true)}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            + Manage Tags
+          </button>
+        </div>
+
+        {/* Search & filter bar */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <SearchBar value={filters.query} onChange={(q) => setFilters({ ...filters, query: q })} />
+
           <select
             id="priority-filter"
             data-testid="priority-filter"
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value as Priority | 'all')}
+            value={filters.priority}
+            onChange={(e) => setFilters({ ...filters, priority: e.target.value as Priority | 'all' })}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">All Priorities</option>
@@ -1080,7 +1743,53 @@ export default function HomePage() {
             <option value="medium">Medium Priority</option>
             <option value="low">Low Priority</option>
           </select>
+
+          <TagFilter
+            tags={tags}
+            value={filters.tagId}
+            onChange={(id) => setFilters({ ...filters, tagId: id })}
+          />
+
+          <button
+            type="button"
+            data-testid="advanced-toggle"
+            onClick={() => setShowAdvanced((prev) => !prev)}
+            className="text-sm text-gray-600 hover:text-gray-900 px-2 py-1.5"
+          >
+            {showAdvanced ? '▼' : '▶'} Advanced
+          </button>
+
+          {isFilterActive(filters) && (
+            <>
+              <button
+                type="button"
+                data-testid="clear-all-btn"
+                onClick={handleClearFilters}
+                className="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-sm"
+              >
+                Clear All
+              </button>
+              <button
+                type="button"
+                data-testid="save-filter-btn"
+                onClick={() => setSaveFilterModalOpen(true)}
+                className="bg-green-100 text-green-700 px-3 py-1.5 rounded-lg text-sm"
+              >
+                💾 Save Filter
+              </button>
+            </>
+          )}
         </div>
+
+        {showAdvanced && (
+          <AdvancedPanel
+            filters={filters}
+            presets={presets}
+            onChange={setFilters}
+            onApplyPreset={handleApplyPreset}
+            onDeletePreset={handleDeletePreset}
+          />
+        )}
 
         {/* Content area */}
         {loading ? (
@@ -1101,6 +1810,7 @@ export default function HomePage() {
                       key={todo.id}
                       todo={todo}
                       subtasks={subtasksMap[todo.id] ?? []}
+                      tags={tagsMap[todo.id] ?? []}
                       subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
@@ -1125,6 +1835,7 @@ export default function HomePage() {
                       key={todo.id}
                       todo={todo}
                       subtasks={subtasksMap[todo.id] ?? []}
+                      tags={tagsMap[todo.id] ?? []}
                       subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
@@ -1157,6 +1868,7 @@ export default function HomePage() {
                       key={todo.id}
                       todo={todo}
                       subtasks={subtasksMap[todo.id] ?? []}
+                      tags={tagsMap[todo.id] ?? []}
                       subtasksExpanded={expandedSubtasks.has(todo.id)}
                       onToggle={handleToggle}
                       onEdit={setEditingTodo}
@@ -1178,6 +1890,8 @@ export default function HomePage() {
       {editingTodo && (
         <EditModal
           todo={editingTodo}
+          tags={tags}
+          selectedTagIds={(tagsMap[editingTodo.id] ?? []).map((t) => t.id)}
           onClose={() => setEditingTodo(null)}
           onSave={handleUpdate}
         />
@@ -1188,6 +1902,26 @@ export default function HomePage() {
         <DeleteModal
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeletingId(null)}
+        />
+      )}
+
+      {/* Tag management modal */}
+      {tagModalOpen && (
+        <TagModal
+          tags={tags}
+          onClose={() => setTagModalOpen(false)}
+          onCreate={handleCreateTag}
+          onUpdate={handleUpdateTag}
+          onDelete={handleDeleteTag}
+        />
+      )}
+
+      {/* Save filter preset modal */}
+      {saveFilterModalOpen && (
+        <SaveFilterModal
+          filters={filters}
+          onSave={handleSavePreset}
+          onClose={() => setSaveFilterModalOpen(false)}
         />
       )}
     </main>

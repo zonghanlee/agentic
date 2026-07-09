@@ -30,6 +30,22 @@ export async function clearTodos(page: Page) {
   )
 }
 
+/** Deletes all tags for the currently signed-in user via the API. */
+export async function clearTags(page: Page) {
+  const tags: { id: number }[] = await page.evaluate(async () => {
+    const res = await fetch('/api/tags')
+    if (!res.ok) return []
+    return res.json()
+  })
+  await Promise.all(
+    tags.map((t) =>
+      page.evaluate(async (id) => {
+        await fetch(`/api/tags/${id}`, { method: 'DELETE' })
+      }, t.id)
+    )
+  )
+}
+
 /** Creates a todo via the UI form and waits for it to appear. */
 export async function createTodo(
   page: Page,
