@@ -10,6 +10,8 @@
     "seed:holidays": "tsx scripts/seed-holidays.ts"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "better-sqlite3": "^11.9.1",
     "jose": "^5.9.6",
     "next": "^16.2.10",

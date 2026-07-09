@@ -144,6 +144,32 @@ export interface Holiday {
   name: string
 }
 
+export interface Authenticator {
+  id: number
+  user_id: number
+  credential_id: string
+  credential_public_key: string
+  counter: number
+  transports: string | null
+  created_at: string
+}
+
+export interface CreateAuthenticatorDto {
+  userId: number
+  credentialId: string
+  credentialPublicKey: string
+  counter: number
+  transports: string | null
+}
+
+export interface Challenge {
+  id: number
+  user_id: number
+  challenge: string
+  expires_at: string
+  created_at: string
+}
+
 export interface ExportedTodo extends Todo {
   subtasks: Subtask[]
   tags: Tag[]
@@ -259,6 +285,24 @@ db.exec(`
     date    TEXT NOT NULL,
     name    TEXT NOT NULL,
     UNIQUE(date, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS authenticators (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id                INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_id          TEXT UNIQUE NOT NULL,
+    credential_public_key  TEXT NOT NULL,
+    counter                INTEGER NOT NULL DEFAULT 0,
+    transports             TEXT,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS challenges (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    challenge  TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `)
 
@@ -678,5 +722,75 @@ export const holidayDB = {
     return db
       .prepare('SELECT * FROM holidays WHERE date LIKE ? ORDER BY date ASC')
       .all(`${prefix}-%`) as Holiday[]
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Authenticator operations (PRP 11 — WebAuthn)
+// ---------------------------------------------------------------------------
+
+export const authenticatorDB = {
+  findByUserId(userId: number): Authenticator[] {
+    return db
+      .prepare('SELECT * FROM authenticators WHERE user_id = ?')
+      .all(userId) as Authenticator[]
+  },
+
+  findByCredentialId(credentialId: string, userId: number): Authenticator | null {
+    return (
+      (db
+        .prepare('SELECT * FROM authenticators WHERE credential_id = ? AND user_id = ?')
+        .get(credentialId, userId) as Authenticator | undefined) ?? null
+    )
+  },
+
+  create(dto: CreateAuthenticatorDto): Authenticator {
+    return db
+      .prepare(
+        `INSERT INTO authenticators (user_id, credential_id, credential_public_key, counter, transports)
+         VALUES (?, ?, ?, ?, ?)
+         RETURNING *`
+      )
+      .get(
+        dto.userId,
+        dto.credentialId,
+        dto.credentialPublicKey,
+        dto.counter,
+        dto.transports
+      ) as Authenticator
+  },
+
+  updateCounter(id: number, counter: number): void {
+    db.prepare('UPDATE authenticators SET counter = ? WHERE id = ?').run(counter, id)
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Challenge operations (PRP 11 — WebAuthn)
+// ---------------------------------------------------------------------------
+
+export const challengeDB = {
+  store(userId: number, challenge: string, expiresAt: string): void {
+    const replace = db.transaction((uid: number, c: string, e: string) => {
+      db.prepare('DELETE FROM challenges WHERE user_id = ?').run(uid)
+      db.prepare('INSERT INTO challenges (user_id, challenge, expires_at) VALUES (?, ?, ?)').run(
+        uid,
+        c,
+        e
+      )
+    })
+    replace(userId, challenge, expiresAt)
+  },
+
+  getLatest(userId: number): Challenge | null {
+    return (
+      (db
+        .prepare('SELECT * FROM challenges WHERE user_id = ? ORDER BY id DESC LIMIT 1')
+        .get(userId) as Challenge | undefined) ?? null
+    )
+  },
+
+  delete(userId: number): void {
+    db.prepare('DELETE FROM challenges WHERE user_id = ?').run(userId)
   },
 }

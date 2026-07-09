@@ -3,11 +3,35 @@
 
 import { Page } from '@playwright/test'
 
-/** Signs in with the given username (creates account if it doesn't exist). */
+/**
+ * Signs in with the given username via a WebAuthn passkey, using a CDP virtual
+ * authenticator so the browser can complete registration without real hardware.
+ * Registering an existing username simply attaches a new passkey to that
+ * account and logs in — safe to call repeatedly across test files.
+ */
 export async function signIn(page: Page, username = 'testuser') {
+  const context = page.context()
+  const cdp = await context.newCDPSession(page)
+  await cdp.send('WebAuthn.enable')
+  try {
+    await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport: 'internal',
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+      },
+    })
+  } catch {
+    // A virtual authenticator already exists for this browser context (e.g. signing
+    // in as a second user within the same test) — Chrome allows only one, and it can
+    // hold credentials for multiple usernames, so we just reuse it.
+  }
+
   await page.goto('/login')
   await page.fill('[data-testid="username-input"]', username)
-  await page.click('[data-testid="login-btn"]')
+  await page.click('[data-testid="register-btn"]')
   await page.waitForURL('/')
 }
 

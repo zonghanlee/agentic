@@ -5,7 +5,7 @@
 Todo App — Next.js 16, React 19, Tailwind CSS 4, better-sqlite3, WebAuthn (Phase 5), Playwright E2E tests.
 All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 
-**Status: 10 / 11 features complete** (Phases 1–4 done; Phase 5 pending). 116 E2E tests passing.
+**Status: 11 / 11 features complete** (Phases 1–5 done). 122 E2E tests passing.
 
 ---
 
@@ -37,7 +37,7 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 | 09 | **Export & Import** | `PRPs/09-export-import.md` | JSON export (full data) + CSV export (spreadsheet); JSON import with ID remapping; relationship preservation |
 | 10 | **Calendar View** | `PRPs/10-calendar-view.md` | `/calendar` route; monthly grid; todos colour-coded by priority; Singapore public holidays; month navigation |
 
-### Phase 5 — Infrastructure
+### Phase 5 — Infrastructure ✅ Complete
 | # | Feature | PRP | Key Deliverables |
 |---|---------|-----|-----------------|
 | 11 | **WebAuthn / Passkeys Auth** | `PRPs/11-authentication-webauthn.md` | Passwordless registration + login via biometrics / hardware key; HTTP-only JWT session cookie (7-day); route protection via `proxy.ts` |
@@ -141,12 +141,31 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 #### Infrastructure
 - All 116 E2E tests across Phase 1–4 passing (one pre-existing tag-filter test is flaky under full-suite parallel timing but passes reliably in isolation — unrelated to Phase 4 changes)
 
+### ✅ Phase 5 — Complete
+
+#### PRP 11 — WebAuthn / Passkeys Authentication
+- Installed `@simplewebauthn/server@^13` + `@simplewebauthn/browser@^13`
+- `lib/db.ts` — `authenticators` (`credential_id` UNIQUE, `credential_public_key`, `counter`, `transports`) + `challenges` (short-lived, one active row per user via `challengeDB.store`) tables; `Authenticator`/`Challenge` types; `authenticatorDB` (`findByUserId`, `findByCredentialId`, `create`, `updateCounter`) and `challengeDB` (`store`, `getLatest`, `delete`)
+- `POST /api/auth/register-options` — finds-or-creates the user, excludes their existing credentials, stores a 5-minute challenge
+- `POST /api/auth/register-verify` — verifies the attestation, stores the new authenticator, issues the JWT session cookie (reuses `lib/auth.ts`'s existing `createSessionToken`/`sessionCookieOptions`, unchanged from Phase 1)
+- `POST /api/auth/login-options` / `POST /api/auth/login-verify` — same challenge pattern for authentication; verifies against the stored public key and bumps `counter` (replay protection) via `authenticatorDB.updateCounter`
+- `GET /api/auth/me` — returns the current session's `userId`/`username`, 401 if none
+- Removed the Phase 1 placeholder `POST /api/auth/login` (plain username-only login) — superseded by the passkey flow; `POST /api/auth/logout` unchanged
+- `app/login/page.tsx` — rewritten with `startRegistration()`/`startAuthentication()` from `@simplewebauthn/browser`; "Register with Passkey" and "Login with Passkey" buttons (kept `username-input` and `login-btn` test IDs from Phase 1 for continuity, added `register-btn`)
+- `app/page.tsx` — added `data-testid="logout-btn"` to the existing sign-out button
+- `proxy.ts` unchanged — still just verifies the JWT cookie, agnostic to how the session was created
+- Note: `@simplewebauthn/server` v13's API differs from the PRP's v9-era code samples — `registrationInfo.credential.id` is already a base64url string (no `isoBase64URL.fromBuffer` needed for the ID, only for the public key), and `excludeCredentials`/`allowCredentials` take plain string IDs
+- `tests/helpers.ts` — `signIn()` now drives the real passkey flow via a Chrome DevTools Protocol virtual authenticator (`WebAuthn.addVirtualAuthenticator`) instead of the old plain-POST login, so all 116 pre-existing E2E tests kept working unchanged; wrapped the CDP call in try/catch since Chrome allows only one virtual authenticator per browser context (hit this when a test signs in as a second user within the same test, e.g. `05-subtasks.spec.ts`'s "belonging to another user" case)
+- `playwright.config.ts` — added `--enable-features=WebAuthenticationAPI` launch arg
+- `.env.local` — added `RP_ID=localhost` / `ORIGIN=http://localhost:3000`
+- `tests/11-authentication.spec.ts` — 6 new E2E tests (route protection, register, login, logout, unknown-username error)
+- All 122 E2E tests across Phase 1–5 passing
+
 ---
 
 ## What Is Pending
 
-### 🔲 Phase 5 — Infrastructure
-- **PRP 11 — WebAuthn Auth**: install `@simplewebauthn/server` + `@simplewebauthn/browser`; `authenticators` table; `POST /api/auth/register-options`, `/register-verify`, `/login-options`, `/login-verify`; replace `app/login/page.tsx` simple form with passkey flow; update `lib/auth.ts` if needed
+Nothing — all 11 features across all 5 phases are complete.
 
 ---
 
@@ -161,9 +180,9 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
               ──► 09 Export/Import (done)
               ──► 10 Calendar (done)
 06 Tags (done) ──► 08 Search (done)
-11 WebAuthn   ──► gates all features in production
+11 WebAuthn (done) ──► gates all features in production
 ```
 
 ## Next Up
 
-Phase 5 (Infrastructure) is the last milestone: PRP 11 — WebAuthn/Passkeys Auth. This replaces the Phase 1 username-only login form in `app/login/page.tsx` with passwordless registration/login, adds an `authenticators` table, and layers on top of the existing JWT session in `lib/auth.ts`. No code yet.
+All 11 features are implemented and all 122 E2E tests pass. Remaining work is production hardening only: set a real `JWT_SECRET` and matching `RP_ID`/`ORIGIN` for the deployed domain (see Security Notes in `PRPs/11-authentication-webauthn.md`).

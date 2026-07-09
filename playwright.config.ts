@@ -11,6 +11,9 @@ export default defineConfig({
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
     timezoneId: 'Asia/Singapore',
+    launchOptions: {
+      args: ['--enable-features=WebAuthenticationAPI'],
+    },
   },
   projects: [
     {

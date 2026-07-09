@@ -1953,6 +1953,7 @@ export default function HomePage() {
               )
             )}
             <button
+              data-testid="logout-btn"
               onClick={handleLogout}
               className="text-sm text-gray-500 hover:text-gray-800"
             >
