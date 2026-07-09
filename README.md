@@ -1,5 +1,8 @@
 <h1>This is a Todo app built entirely using Agentic CLI. Purpose is for my own experimentation and learning.</h1>
 
+Model used for development: Sonnet 4.6 (subsequently changed to Sonnet 5)
+Evaluaation Model: Opus 4.8 (generated evaluation_results.md)
+
 
 ## Clone and Setup Todo App
 
@@ -301,18 +304,3 @@ Ctrl+I (Cmd+I)                        # Inline Copilot
 Tab                                    # Accept suggestion
 Esc                                    # Dismiss suggestion
 ```
-
----
-
-## Success Criteria
-
-You've successfully completed setup when:
-
-- ✅ VS Code installed and running
-- ✅ GitHub Copilot active (shows suggestions)
-- ✅ Copilot Chat responds with project-specific answers
-- ✅ Todo app running on http://localhost:3000
-- ✅ Can register/login with WebAuthn
-- ✅ Can create and manage todos
-- ✅ Tests pass with `npx playwright test`
-- ✅ Copilot references PRPs when asked about features
