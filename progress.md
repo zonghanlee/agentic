@@ -67,23 +67,42 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 - Client-side `priorityFilter` state with `useMemo` filtering
 - API returns 400 for invalid priority values
 
+### ✅ Phase 2 — Complete
+
+#### PRP 03 — Recurring Todos
+- `lib/db.ts` — `RecurrencePattern` type, `is_recurring` + `recurrence_pattern` columns and DTOs
+- `app/page.tsx` — recurring checkbox (`edit-recurring-checkbox`) + pattern select (`edit-recurrence-pattern-select`) in create/edit forms; `RecurrenceBadge` (🔄) on todo cards
+- Completion flow auto-creates next instance with same settings and calculated due date
+- `tests/03-recurring.spec.ts` — 11 E2E tests
+
+#### PRP 04 — Reminders & Notifications
+- `lib/db.ts` — `reminder_minutes` + `last_notification_sent` columns, `findPendingReminders()`, `markNotificationSent()`
+- `GET /api/notifications/check` — returns todos due for a reminder notification
+- `lib/hooks/useNotifications.ts` — polls every 60s, fires browser `Notification` API when permission is granted
+- `app/page.tsx` — reminder select (`edit-reminder-select`) in create/edit forms; `ReminderBadge` (🔔) on todo cards
+- `tests/04-reminders.spec.ts` — 13 E2E tests
+- Note: no explicit `Notification.requestPermission()` call found in `page.tsx` — worth double-checking the permission-request UX is wired up somewhere
+
+#### PRP 05 — Subtasks & Progress
+- `lib/db.ts` — `subtasks` table + full `subtaskDB` CRUD (`create`, `update`, `delete`, `findByTodoId`)
+- `GET/POST /api/todos/[id]/subtasks`, `PUT/DELETE /api/todos/[id]/subtasks/[subtaskId]`, `app/api/todos/subtasks/route.ts`
+- `app/page.tsx` — `computeProgress()`, `ProgressBar`, `SubtaskPanel` inline checklist UI with `X/Y` counter
+- Cascade delete of subtasks with parent todo
+- `tests/05-subtasks.spec.ts` — 18 E2E tests
+
 #### Infrastructure & Tests
 - `package.json` — Next.js 16.2.10, React 19, Tailwind CSS 4, better-sqlite3, jose, Playwright
 - `next.config.ts` — `serverExternalPackages: ['better-sqlite3']`
 - `postcss.config.mjs` — Tailwind CSS 4 PostCSS plugin
 - `playwright.config.ts` — `timezoneId: 'Asia/Singapore'`, auto-starts dev server
 - `tests/helpers.ts` — `signIn()`, `createTodo()`, `clearTodos()` (with `beforeEach` + `afterEach` isolation)
-- `tests/01-todo-crud.spec.ts` — 11 E2E tests
-- `tests/02-priority.spec.ts` — 8 E2E tests
+- `tests/01-todo-crud.spec.ts` — 13 E2E tests
+- `tests/02-priority.spec.ts` — 10 E2E tests
+- All 65 E2E tests across Phase 1 + Phase 2 passing
 
 ---
 
 ## What Is Pending
-
-### 🔲 Phase 2 — Core Features
-- **PRP 03 — Recurring Todos**: recurring checkbox + pattern select in form; auto-create next instance on completion; 🔄 badge; extend `UpdateTodoDto` with `is_recurring` + `recurrence_pattern`
-- **PRP 04 — Reminders & Notifications**: reminder select in form (15m / 30m / 1h / 2h / 1d / 2d / 1w); `GET /api/notifications/check` endpoint; polling hook `useNotifications`; 🔔 badge; browser `Notification` permission flow
-- **PRP 05 — Subtasks & Progress**: `subtasks` table; `subtaskDB` CRUD; `GET/POST /api/todos/[id]/subtasks`; `PUT/DELETE /api/subtasks/[id]`; inline checklist UI; progress bar component
 
 ### 🔲 Phase 3 — Organisation
 - **PRP 06 — Tag System**: `tags` + `todo_tags` tables; `tagDB` CRUD; `GET/POST /api/tags`; `PUT/DELETE /api/tags/[id]`; `POST/DELETE /api/todos/[id]/tags/[tagId]`; tag pill UI; tag filter dropdown
@@ -103,12 +122,16 @@ All date/time operations use the **Singapore timezone** (`Asia/Singapore`).
 
 ```
 01 Todo CRUD  ──► 02 Priority (done)
-              ──► 03 Recurring
-              ──► 04 Reminders
-              ──► 05 Subtasks ──► 07 Templates
+              ──► 03 Recurring (done)
+              ──► 04 Reminders (done)
+              ──► 05 Subtasks (done) ──► 07 Templates
               ──► 06 Tags     ──► 08 Search
               ──► 09 Export/Import
               ──► 10 Calendar
 06 Tags       ──► 08 Search
 11 WebAuthn   ──► gates all features in production
 ```
+
+## Next Up
+
+Phase 3 (Organisation) is the next milestone: PRP 06 — Tag System, then PRP 08 — Search & Filtering (depends on tags). Both have no code yet — `tags`/`todo_tags` tables, `tagDB`, tag routes, and filter UI all need to be built from scratch.
