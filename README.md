@@ -1,225 +1,11 @@
-# Complete Setup Guide: Todo App Development with GitHub Copilot
+This is a Todo app set up using Agentic CLI. Purpose is for me to 
 
-This walkthrough will guide you from zero to running the Todo App with GitHub Copilot assistance.
-
-Reference : https://ai-sdlc-workshop-day1-production.up.railway.app/login
-
----
-
-## Table of Contents
-1. [Install Visual Studio Code](#1-install-visual-studio-code)
-2. [Install GitHub Copilot](#2-install-github-copilot)
-3. [Install Node.js](#3-install-nodejs)
-4. [Clone and Setup Todo App](#4-clone-and-setup-todo-app)
-5. [Run the Application](#5-run-the-application)
-6. [Use GitHub Copilot with PRPs](#6-use-github-copilot-with-prps)
-7. [Verify Core Features](#7-verify-core-features)
-8. [Troubleshooting](#troubleshooting)
-
----
-
-## 1. Install Visual Studio Code
-
-### Windows
-1. Visit https://code.visualstudio.com/
-2. Click **"Download for Windows"**
-3. Run the downloaded installer (`VSCodeSetup-x64-*.exe`)
-4. Follow installation wizard:
-   - ✅ Accept license agreement
-   - ✅ Check "Add to PATH" option
-   - ✅ Check "Create a desktop icon" (optional)
-   - ✅ Check "Register Code as an editor for supported file types"
-5. Click **"Install"**
-6. Launch VS Code after installation
-
-### macOS
-1. Visit https://code.visualstudio.com/
-2. Click **"Download for Mac"**
-3. Open the downloaded `.zip` file
-4. Drag **Visual Studio Code.app** to Applications folder
-5. Launch from Applications or Spotlight (Cmd+Space, type "Visual Studio Code")
-
-### Linux (Ubuntu/Debian)
-```bash
-# Update package index
-sudo apt update
-
-# Install dependencies
-sudo apt install software-properties-common apt-transport-https wget
-
-# Import Microsoft GPG key
-wget -q https://packages.microsoft.com/keys/microsoft.asc -O- | sudo apt-key add -
-
-# Add VS Code repository
-sudo add-apt-repository "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main"
-
-# Install VS Code
-sudo apt update
-sudo apt install code
-
-# Launch VS Code
-code
-```
-
-### Verify Installation
-Open terminal/command prompt and run:
-```bash
-code --version
-```
-You should see version information like:
-```
-1.95.0
-912bb683695358a54ae0c670461738984cbb5b95
-x64
-```
-
----
-
-## 2. Install GitHub Copilot
-
-### Prerequisites
-- GitHub account (create at https://github.com if needed)
-- GitHub Copilot subscription (free trial available)
-
-### Step 1: Enable GitHub Copilot for Your Account
-1. Visit https://github.com/settings/copilot
-2. Click **"Start free trial"** or **"Get access to GitHub Copilot"**
-3. Choose plan:
-   - **Individual**: $10/month (30-day free trial)
-   - **Business**: $19/user/month
-   - **Free for students**: Apply at https://education.github.com/
-4. Complete payment setup (if applicable)
-5. Enable Copilot for your account
-
-### Step 2: Install Copilot Extension in VS Code
-1. Open **Visual Studio Code**
-2. Click **Extensions** icon in sidebar (or press `Ctrl+Shift+X` / `Cmd+Shift+X`)
-3. Search for **"GitHub Copilot"**
-4. Find extension by **GitHub** (verified publisher)
-5. Click **"Install"**
-6. Also install **"GitHub Copilot Chat"** extension (for chat functionality)
-
-### Step 3: Sign in to GitHub
-1. After installation, VS Code will prompt to sign in
-2. Click **"Sign in to GitHub"**
-3. Browser opens → Click **"Authorize Visual Studio Code"**
-4. Return to VS Code
-5. Bottom right should show "GitHub Copilot: Ready" status
-
-### Verify Copilot Installation
-1. Create a new file: `test.js`
-2. Type: `// function to add two numbers`
-3. Press `Enter`
-4. Copilot should suggest a function (shown in gray text)
-5. Press `Tab` to accept suggestion
-
-If you see suggestions, Copilot is working! ✅
-
----
-
-## 3. Install Node.js
-
-The Todo App requires **Node.js 20+** and **npm**.
-
-### Windows
-1. Visit https://nodejs.org/
-2. Download **"LTS"** version (recommended)
-3. Run installer (`node-v20.x.x-x64.msi`)
-4. Follow wizard:
-   - ✅ Accept license
-   - ✅ Keep default installation path
-   - ✅ Install npm package manager
-   - ✅ Install necessary tools (check box for native modules)
-5. Click **"Finish"**
-
-### macOS
-**Option 1: Official Installer**
-1. Visit https://nodejs.org/
-2. Download **"LTS"** version
-3. Open `.pkg` file and follow installer
-
-**Option 2: Using Homebrew**
-```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install Node.js
-brew install node@20
-
-# Verify
-node --version
-npm --version
-```
-
-### Linux (Ubuntu/Debian)
-```bash
-# Install Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Verify installation
-node --version
-npm --version
-```
-
-### Verify Node.js Installation
-Open terminal and run:
-```bash
-node --version  # Should show v20.x.x or higher
-npm --version   # Should show 10.x.x or higher
-```
-
----
-
-## 4. Clone and Setup Todo App
-
-### Option A: Clone from Git (if using version control)
-```bash
-# Navigate to your projects folder
-cd ~/Projects  # or C:\Projects on Windows
-
-# Clone repository (replace with actual repo URL)
-git clone <your-repo-url> todo-app
-cd todo-app
-```
-
-### Option B: Setup Existing Project
-If you already have the project folder:
-```bash
-# Navigate to project directory
-cd /path/to/todo-app
-```
+## Clone and Setup Todo App
 
 ### Install Dependencies
 ```bash
 # Install all npm packages (this may take a few minutes)
 npm install
-```
-
-You should see output like:
-```
-added 345 packages, and audited 346 packages in 45s
-```
-
-### Project Structure Verification
-Ensure you have these key files:
-```
-todo-app/
-├── .github/
-│   ├── copilot-instructions.md    ← Copilot will read this
-│   └── PRPs/
-│       └── todo-app-core-features.md  ← Product requirements
-├── app/
-│   ├── page.tsx
-│   ├── layout.tsx
-│   └── api/
-├── lib/
-│   ├── db.ts
-│   ├── auth.ts
-│   └── timezone.ts
-├── package.json
-├── next.config.ts
-└── README.md
 ```
 
 ---
@@ -262,87 +48,8 @@ Press `Ctrl+C` in the terminal running `npm run dev`
 
 ---
 
-## 6. Use GitHub Copilot with PRPs
 
-Now that everything is installed, let's use Copilot with the Product Requirement Prompts!
-
-### Step 1: Open Project in VS Code
-```bash
-# From project directory
-code .
-```
-
-### Step 2: Verify Copilot Instructions Loaded
-1. Open **GitHub Copilot Chat** (Ctrl+Alt+I / Cmd+Alt+I)
-2. Type: `What timezone should I use for date operations?`
-3. Copilot should mention **Singapore timezone** and reference `lib/timezone.ts`
-   - If it does, the instructions are working! ✅
-
-### Step 3: Reference PRPs in Chat
-
-#### Example 1: Ask About Features
-```
-@workspace What are the acceptance criteria for the recurring todos feature?
-```
-
-Copilot will reference `.github/PRPs/todo-app-core-features.md` and list:
-- Can create recurring todo with pattern
-- Completing recurring todo creates next instance
-- Next instance has correct due date
-- etc.
-
-#### Example 2: Implement New Feature
-```
-Using the PRP for the tag system, help me add a new color picker for tag creation
-```
-
-Copilot will:
-1. Read PRP section on tags
-2. Understand technical constraints (hex colors, unique names)
-3. Suggest implementation following project patterns
-
-#### Example 3: Debug Using PRPs
-```
-I'm getting an error with recurring todos. Check the PRP requirements and help me fix it.
-```
-
-Copilot will:
-1. Review recurring todo specifications
-2. Check your code against PRP constraints
-3. Suggest fixes aligned with requirements
-
-### Step 4: Use Copilot Inline Suggestions
-
-**Scenario**: Add a new API route for todo statistics
-
-1. Create file: `app/api/stats/route.ts`
-2. Type comment:
-   ```typescript
-   // GET endpoint to return todo statistics following project auth pattern
-   ```
-3. Press Enter
-4. Copilot suggests code following:
-   - Session authentication pattern
-   - Singapore timezone handling
-   - Database query structure from `lib/db.ts`
-5. Press `Tab` to accept suggestions
-
-### Step 5: Ask Copilot to Generate Code from PRP
-
-Open Copilot Chat and try:
-```
-Using the PRP for export/import feature, generate the import validation logic
-```
-
-Copilot will create code that:
-- Validates JSON structure
-- Checks required fields (todos, subtasks, tags)
-- Handles ID remapping
-- Preserves relationships
-
----
-
-## 7. Verify Core Features
+## Verify Core Features
 
 Use this checklist to verify the app is working correctly.
 
@@ -442,32 +149,6 @@ Use this checklist to verify the app is working correctly.
 5. Click "Import Todos" and select file
 6. Verify todos restored with all metadata
 ```
-
----
-
-## Troubleshooting
-
-### Copilot Not Working
-
-**Problem**: No suggestions appearing
-
-**Solutions**:
-1. Check Copilot status bar (bottom right)
-   - Should say "GitHub Copilot: Ready"
-2. Sign out and sign in again:
-   - Click Accounts icon (bottom left)
-   - Sign out of GitHub
-   - Sign in again
-3. Restart VS Code
-4. Check subscription at https://github.com/settings/copilot
-
-**Problem**: Copilot ignoring instructions
-
-**Solutions**:
-1. Verify `.github/copilot-instructions.md` exists
-2. Reload VS Code window (Ctrl+Shift+P → "Reload Window")
-3. Use `@workspace` in chat for better context
-4. Be specific: "Following the project's auth pattern..."
 
 ---
 
@@ -571,26 +252,7 @@ npx playwright test tests/01-authentication.spec.ts
 
 ---
 
-## Next Steps
-
-Now that everything is set up, you can:
-
-### 1. Explore with Copilot Chat
-```
-@workspace Show me how to add a new priority level called "urgent"
-```
-
-### 2. Implement New Features
-```
-Using the PRP format, help me add a "notes" field to todos
-```
-
-### 3. Fix Bugs
-```
-I'm getting undefined for authenticator.counter. Check the copilot instructions and fix it.
-```
-
-### 4. Run Tests
+### Run Tests
 ```bash
 # Run all tests
 npx playwright test
@@ -598,6 +260,9 @@ npx playwright test
 # View test report
 npx playwright show-report
 ```
+
+---
+
 
 ### 5. Build for Production
 ```bash
@@ -607,16 +272,6 @@ npm run build
 # Start production server
 npm start
 ```
-
----
-
-## Additional Resources
-
-- **VS Code Docs**: https://code.visualstudio.com/docs
-- **GitHub Copilot Docs**: https://docs.github.com/en/copilot
-- **Next.js Docs**: https://nextjs.org/docs
-- **Playwright Docs**: https://playwright.dev/
-- **WebAuthn Guide**: https://webauthn.guide/
 
 ---
 
@@ -660,12 +315,3 @@ You've successfully completed setup when:
 - ✅ Can create and manage todos
 - ✅ Tests pass with `npx playwright test`
 - ✅ Copilot references PRPs when asked about features
-
----
-
-**Congratulations!** 🎉 You're now ready to develop the Todo App with GitHub Copilot assistance.
-
-For questions or issues, refer to the troubleshooting section or ask Copilot Chat:
-```
-@workspace I'm having trouble with [describe issue]
-```
