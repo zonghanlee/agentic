@@ -1,6 +1,7 @@
 <h1>This is a Todo app built entirely using Agentic CLI. Purpose is for my own experimentation and learning.</h1>
 
 Model used for development: Sonnet 4.6 - 5.0 (switched between the 2 due to token limitations)
+
 Evaluation Model: Opus 4.8 (generated evaluation_results.md)
 
 
