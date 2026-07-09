@@ -1,4 +1,5 @@
-This is a Todo app set up using Agentic CLI. Purpose is for me to 
+<h1>This is a Todo app built entirely using Agentic CLI. Purpose is for my own experimentation and learning.</h1>
+
 
 ## Clone and Setup Todo App
 
@@ -10,7 +11,7 @@ npm install
 
 ---
 
-## 5. Run the Application
+## Run the Application
 
 ### Start Development Server
 ```bash
