@@ -1,0 +1,30 @@
+# Next.js
+.next/
+out/
+build/
+
+# Dependencies
+node_modules/
+
+# Database (local dev only — never commit)
+todos.db
+todos.db-wal
+todos.db-shm
+
+# Environment
+.env.local
+.env*.local
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# OS
+.DS_Store
+Thumbs.db
